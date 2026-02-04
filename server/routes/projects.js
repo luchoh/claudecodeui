@@ -4,6 +4,8 @@ import path from 'path';
 import { spawn } from 'child_process';
 import os from 'os';
 import { addProjectManually } from '../projects.js';
+import { validateAuthTicket } from '../middleware/auth.js';
+import { userDb } from '../database/db.js';
 
 const router = express.Router();
 
@@ -333,9 +335,16 @@ async function getGithubTokenById(tokenId, userId) {
 /**
  * Clone repository with progress streaming (SSE)
  * GET /api/projects/clone-progress
+ *
+ * SEC-005: This endpoint uses ticket-based auth since EventSource can't set headers
+ * Client must first POST /api/auth/ticket with purpose='sse-clone' to get a ticket
+ *
+ * NOTE: This handler is exported separately and mounted BEFORE authenticateToken
+ * middleware in server/index.js to allow ticket-only authentication.
  */
-router.get('/clone-progress', async (req, res) => {
-  const { path: workspacePath, githubUrl, githubTokenId, newGithubToken } = req.query;
+export async function cloneProgressHandler(req, res) {
+  // SEC-005: GitHub credentials now come from ticket context, not URL params
+  const { path: workspacePath, githubUrl, ticket } = req.query;
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -346,7 +355,35 @@ router.get('/clone-progress', async (req, res) => {
     res.write(`data: ${JSON.stringify({ type, ...data })}\n\n`);
   };
 
+  // Variables to hold credentials from ticket context
+  let ticketContext = {};
+
   try {
+    // SEC-005: Validate ticket-based authentication (required for SSE)
+    if (!ticket) {
+      sendEvent('error', { message: 'Authentication ticket required' });
+      res.end();
+      return;
+    }
+
+    const ticketData = validateAuthTicket(ticket, 'sse-clone');
+    if (!ticketData) {
+      sendEvent('error', { message: 'Invalid or expired ticket' });
+      res.end();
+      return;
+    }
+
+    // Set user from ticket
+    req.user = userDb.getUserById(ticketData.userId);
+    if (!req.user) {
+      sendEvent('error', { message: 'User not found' });
+      res.end();
+      return;
+    }
+
+    // SEC-005: Extract GitHub credentials from ticket context (not URL)
+    ticketContext = ticketData.context || {};
+
     if (!workspacePath || !githubUrl) {
       sendEvent('error', { message: 'workspacePath and githubUrl are required' });
       res.end();
@@ -364,9 +401,10 @@ router.get('/clone-progress', async (req, res) => {
 
     await fs.mkdir(absolutePath, { recursive: true });
 
+    // SEC-005: Get GitHub token from ticket context instead of URL params
     let githubToken = null;
-    if (githubTokenId) {
-      const token = await getGithubTokenById(parseInt(githubTokenId), req.user.id);
+    if (ticketContext.githubTokenId) {
+      const token = await getGithubTokenById(parseInt(ticketContext.githubTokenId), req.user.id);
       if (!token) {
         await fs.rm(absolutePath, { recursive: true, force: true });
         sendEvent('error', { message: 'GitHub token not found' });
@@ -374,8 +412,8 @@ router.get('/clone-progress', async (req, res) => {
         return;
       }
       githubToken = token.github_token;
-    } else if (newGithubToken) {
-      githubToken = newGithubToken;
+    } else if (ticketContext.newGithubToken) {
+      githubToken = ticketContext.newGithubToken;
     }
 
     const normalizedUrl = githubUrl.replace(/\/+$/, '').replace(/\.git$/, '');
@@ -478,7 +516,7 @@ router.get('/clone-progress', async (req, res) => {
     sendEvent('error', { message: error.message });
     res.end();
   }
-});
+}
 
 /**
  * Helper function to clone a GitHub repository

@@ -36,6 +36,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import os from 'os';
 import http from 'http';
 import cors from 'cors';
+import helmet from 'helmet';
 import { promises as fsPromises } from 'fs';
 import { spawn } from 'child_process';
 import pty from 'node-pty';
@@ -55,13 +56,121 @@ import mcpUtilsRoutes from './routes/mcp-utils.js';
 import commandsRoutes from './routes/commands.js';
 import settingsRoutes from './routes/settings.js';
 import agentRoutes from './routes/agent.js';
-import projectsRoutes, { WORKSPACES_ROOT, validateWorkspacePath } from './routes/projects.js';
+import projectsRoutes, { WORKSPACES_ROOT, validateWorkspacePath, cloneProgressHandler } from './routes/projects.js';
 import cliAuthRoutes from './routes/cli-auth.js';
 import userRoutes from './routes/user.js';
 import codexRoutes from './routes/codex.js';
 import { initializeDatabase } from './database/db.js';
-import { validateApiKey, authenticateToken, authenticateWebSocket } from './middleware/auth.js';
+import { validateApiKey, authenticateToken, authenticateWebSocket, authenticateWebSocketWithTicket, validateSecurityConfig } from './middleware/auth.js';
+import { authRateLimiter, generalRateLimiter, errorSanitizer } from './middleware/security.js';
+import { validateShellMessage, validateChatMessage } from './middleware/ws-validation.js';
 import { IS_PLATFORM } from './constants/config.js';
+
+// SEC-003: CORS configuration
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:3001,http://localhost:5173')
+  .split(',')
+  .map(o => o.trim())
+  .filter(Boolean);
+
+// SEC-004: Server binding configuration
+const BIND_HOST = process.env.BIND_HOST || '127.0.0.1';
+
+// SEC-006: Allowed PTY commands
+const ALLOWED_PTY_COMMANDS = new Set([
+  'claude', 'cursor-agent', 'codex', 'bash', 'zsh', 'sh'
+]);
+
+// SEC-012: PTY idle timeout (default 5 minutes)
+const PTY_IDLE_TIMEOUT = parseInt(process.env.PTY_IDLE_TIMEOUT || '300000', 10);
+
+// SEC-006: Multi-root workspace validation
+const WORKSPACES_ROOTS = (process.env.WORKSPACES_ROOT || os.homedir())
+  .split(',')
+  .map(p => path.resolve(p.trim()));
+
+/**
+ * SEC-006: Validate that a path is within allowed workspace roots
+ * @param {string} requestedPath - The path to validate
+ * @returns {boolean} Whether the path is allowed
+ */
+function isAllowedWorkspacePath(requestedPath) {
+  try {
+    const resolved = path.resolve(requestedPath);
+    // Try to get real path (follows symlinks)
+    let real;
+    try {
+      real = fs.realpathSync(resolved);
+    } catch (e) {
+      // Path doesn't exist yet, use resolved path
+      real = resolved;
+    }
+    return WORKSPACES_ROOTS.some(root =>
+      real === root || real.startsWith(root + path.sep)
+    );
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * SEC-006: Validate a command against the allowlist
+ * @param {string} cmd - The command to validate
+ * @returns {{valid: boolean, cmd?: string, args?: string[], error?: string}}
+ */
+function validatePtyCommand(cmd) {
+  if (!cmd) return { valid: true, cmd: null, args: [] };
+
+  // Reject shell metacharacters that could enable command injection
+  if (/[&;|`<>$(){}\\]/.test(cmd)) {
+    return { valid: false, error: 'Shell metacharacters not allowed in commands' };
+  }
+
+  const parts = cmd.trim().split(/\s+/);
+  const baseCmd = parts[0];
+
+  if (!ALLOWED_PTY_COMMANDS.has(baseCmd)) {
+    return {
+      valid: false,
+      error: `Command '${baseCmd}' not in allowlist. Allowed: ${Array.from(ALLOWED_PTY_COMMANDS).join(', ')}`
+    };
+  }
+
+  return { valid: true, cmd: baseCmd, args: parts.slice(1) };
+}
+
+/**
+ * SEC-006: Escape a string for safe use in bash/sh
+ * Uses single quotes and escapes embedded single quotes with '\''
+ * @param {string} arg - The argument to escape
+ * @returns {string} The escaped argument
+ */
+function escapeShellArg(arg) {
+  if (!arg) return "''";
+  // Replace single quotes with '\'' (end quote, escaped quote, start quote)
+  return "'" + arg.replace(/'/g, "'\\''") + "'";
+}
+
+/**
+ * SEC-006: Escape a string for PowerShell
+ * Escapes backticks, double quotes, and dollar signs
+ * @param {string} arg - The argument to escape
+ * @returns {string} The escaped argument
+ */
+function escapePowerShellArg(arg) {
+  if (!arg) return '""';
+  // Escape backticks, double quotes, and dollar signs
+  return '"' + arg.replace(/[`"$]/g, '`$&') + '"';
+}
+
+/**
+ * SEC-006: Validate sessionId format (alphanumeric, hyphens, underscores only)
+ * @param {string} sessionId - The session ID to validate
+ * @returns {boolean} Whether the sessionId is valid
+ */
+function isValidSessionId(sessionId) {
+  if (!sessionId) return true;
+  return /^[a-zA-Z0-9_-]+$/.test(sessionId);
+}
 
 // File system watcher for projects folder
 let projectsWatcher = null;
@@ -197,22 +306,29 @@ const wss = new WebSocketServer({
             return true;
         }
 
-        // Normal mode: verify token
-        // Extract token from query parameters or headers
+        // Parse URL to determine path and get ticket
         const url = new URL(info.req.url, 'http://localhost');
-        const token = url.searchParams.get('token') ||
-            info.req.headers.authorization?.split(' ')[1];
+        const pathname = url.pathname;
 
-        // Verify token
-        const user = authenticateWebSocket(token);
-        if (!user) {
-            console.log('[WARN] WebSocket authentication failed');
+        // SEC-005: Use ticket-based authentication only (legacy token auth removed)
+        const ticket = url.searchParams.get('ticket');
+
+        // Determine purpose based on path
+        const purpose = pathname === '/shell' ? 'shell' : 'websocket';
+
+        if (!ticket) {
+            console.log('[WARN] WebSocket authentication failed: no ticket provided');
             return false;
         }
 
-        // Store user info in the request for later use
+        // Ticket-based auth
+        const user = authenticateWebSocketWithTicket(ticket, purpose);
+        if (!user) {
+            console.log('[WARN] WebSocket ticket authentication failed');
+            return false;
+        }
         info.req.user = user;
-        console.log('[OK] WebSocket authenticated for user:', user.username);
+        console.log('[OK] WebSocket ticket authenticated for user:', user.username);
         return true;
     }
 });
@@ -220,7 +336,39 @@ const wss = new WebSocketServer({
 // Make WebSocket server available to routes
 app.locals.wss = wss;
 
-app.use(cors());
+// SEC-003: CORS restriction with explicit origin whitelist
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (curl, mobile apps, same-origin)
+    if (!origin) return callback(null, true);
+    if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+    console.warn(`[SECURITY] CORS blocked request from origin: ${origin}`);
+    callback(new Error('CORS not allowed'));
+  },
+  credentials: true
+}));
+
+// SEC-013: Security headers with Content Security Policy
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"], // Required for React dev
+      styleSrc: ["'self'", "'unsafe-inline'"], // Required for some UI libs
+      connectSrc: ["'self'", "ws:", "wss:", "http:", "https:"], // WebSocket connections
+      imgSrc: ["'self'", "data:", "blob:", "https:"],
+      fontSrc: ["'self'", "data:"],
+      frameAncestors: ["'none'"],
+      formAction: ["'self'"]
+    }
+  },
+  crossOriginEmbedderPolicy: false, // May need adjustment for external resources
+  crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' } // Allow OAuth popups
+}));
+
+// SEC-009: Apply general rate limiting to all API routes
+app.use('/api', generalRateLimiter);
+
 app.use(express.json({
   limit: '50mb',
   type: (req) => {
@@ -245,8 +393,12 @@ app.get('/health', (req, res) => {
 // Optional API key validation (if configured)
 app.use('/api', validateApiKey);
 
-// Authentication routes (public)
-app.use('/api/auth', authRoutes);
+// Authentication routes (public, with stricter rate limiting)
+app.use('/api/auth', authRateLimiter, authRoutes);
+
+// SEC-005: Clone-progress uses ticket-only auth (EventSource can't send headers)
+// Must be mounted BEFORE the authenticated /api/projects routes
+app.get('/api/projects/clone-progress', cloneProgressHandler);
 
 // Projects API Routes (protected)
 app.use('/api/projects', authenticateToken, projectsRoutes);
@@ -307,9 +459,19 @@ app.use(express.static(path.join(__dirname, '../dist'), {
 // /api/config endpoint removed - no longer needed
 // Frontend now uses window.location for WebSocket URLs
 
-// System update endpoint
+// SEC-008: System update endpoint (disabled by default)
 app.post('/api/system/update', authenticateToken, async (req, res) => {
+    // Check if system update is explicitly enabled
+    if (process.env.ENABLE_SYSTEM_UPDATE !== 'true') {
+        console.warn(`[SECURITY] System update attempted by user ${req.user.id} but endpoint is disabled`);
+        return res.status(403).json({
+            error: 'System update endpoint is disabled',
+            message: 'Set ENABLE_SYSTEM_UPDATE=true to enable this endpoint'
+        });
+    }
+
     try {
+        console.log(`[INFO] System update initiated by user ${req.user.id}`);
         // Get the project root directory (parent of server directory)
         const projectRoot = path.join(__dirname, '..');
 
@@ -836,7 +998,17 @@ function handleChatConnection(ws) {
 
     ws.on('message', async (message) => {
         try {
-            const data = JSON.parse(message);
+            // SEC-015: Validate message with Zod schema
+            const validationResult = validateChatMessage(message.toString());
+            if (!validationResult.success) {
+                console.warn('[SECURITY] Invalid chat message format:', validationResult.error);
+                writer.send({
+                    type: 'error',
+                    error: `Invalid message format: ${validationResult.error}`
+                });
+                return;
+            }
+            const data = validationResult.data;
 
             if (data.type === 'claude-command') {
                 console.log('[DEBUG] User message:', data.command || '[Continue/Resume]');
@@ -964,7 +1136,17 @@ function handleShellConnection(ws) {
 
     ws.on('message', async (message) => {
         try {
-            const data = JSON.parse(message);
+            // SEC-015: Validate message with Zod schema
+            const validationResult = validateShellMessage(message.toString());
+            if (!validationResult.success) {
+                console.warn('[SECURITY] Invalid shell message format:', validationResult.error);
+                ws.send(JSON.stringify({
+                    type: 'error',
+                    message: `Invalid message format: ${validationResult.error}`
+                }));
+                return;
+            }
+            const data = validationResult.data;
             console.log('📨 Shell message received:', data.type);
 
             if (data.type === 'init') {
@@ -974,6 +1156,42 @@ function handleShellConnection(ws) {
                 const provider = data.provider || 'claude';
                 const initialCommand = data.initialCommand;
                 const isPlainShell = data.isPlainShell || (!!initialCommand && !hasSession) || provider === 'plain-shell';
+
+                // SEC-006: Validate sessionId format
+                if (sessionId && !isValidSessionId(sessionId)) {
+                    console.warn(`[SECURITY] Rejected invalid sessionId: ${sessionId}`);
+                    ws.send(JSON.stringify({
+                        type: 'error',
+                        message: 'Invalid session ID format'
+                    }));
+                    ws.close();
+                    return;
+                }
+
+                // SEC-006: Validate workspace path
+                if (!isAllowedWorkspacePath(projectPath)) {
+                    console.warn(`[SECURITY] Rejected path outside allowed workspace: ${projectPath}`);
+                    ws.send(JSON.stringify({
+                        type: 'error',
+                        message: 'Path not in allowed workspace. Check WORKSPACES_ROOT configuration.'
+                    }));
+                    ws.close();
+                    return;
+                }
+
+                // SEC-006: Validate command if plain shell mode
+                if (isPlainShell && initialCommand) {
+                    const cmdResult = validatePtyCommand(initialCommand);
+                    if (!cmdResult.valid) {
+                        console.warn(`[SECURITY] Rejected command: ${cmdResult.error}`);
+                        ws.send(JSON.stringify({
+                            type: 'error',
+                            message: cmdResult.error
+                        }));
+                        ws.close();
+                        return;
+                    }
+                }
 
                 // Login commands (Claude/Cursor auth) should never reuse cached sessions
                 const isLoginCommand = initialCommand && (
@@ -1051,44 +1269,71 @@ function handleShellConnection(ws) {
 
                 try {
                     // Prepare the shell command adapted to the platform and provider
+                    // SEC-006: Use proper escaping for all user-supplied values
                     let shellCommand;
+                    const isWindows = os.platform() === 'win32';
+                    const escapedPath = isWindows ? escapePowerShellArg(projectPath) : escapeShellArg(projectPath);
+
                     if (isPlainShell) {
-                        // Plain shell mode - just run the initial command in the project directory
-                        if (os.platform() === 'win32') {
-                            shellCommand = `Set-Location -Path "${projectPath}"; ${initialCommand}`;
+                        // Plain shell mode - command already validated by validatePtyCommand
+                        if (isWindows) {
+                            shellCommand = `Set-Location -Path ${escapedPath}; ${initialCommand}`;
                         } else {
-                            shellCommand = `cd "${projectPath}" && ${initialCommand}`;
+                            shellCommand = `cd ${escapedPath} && ${initialCommand}`;
                         }
                     } else if (provider === 'cursor') {
                         // Use cursor-agent command
-                        if (os.platform() === 'win32') {
+                        if (isWindows) {
                             if (hasSession && sessionId) {
-                                shellCommand = `Set-Location -Path "${projectPath}"; cursor-agent --resume="${sessionId}"`;
+                                // sessionId already validated by isValidSessionId
+                                const escapedSessionId = escapePowerShellArg(sessionId);
+                                shellCommand = `Set-Location -Path ${escapedPath}; cursor-agent --resume=${escapedSessionId}`;
                             } else {
-                                shellCommand = `Set-Location -Path "${projectPath}"; cursor-agent`;
+                                shellCommand = `Set-Location -Path ${escapedPath}; cursor-agent`;
                             }
                         } else {
                             if (hasSession && sessionId) {
-                                shellCommand = `cd "${projectPath}" && cursor-agent --resume="${sessionId}"`;
+                                // sessionId already validated by isValidSessionId
+                                const escapedSessionId = escapeShellArg(sessionId);
+                                shellCommand = `cd ${escapedPath} && cursor-agent --resume=${escapedSessionId}`;
                             } else {
-                                shellCommand = `cd "${projectPath}" && cursor-agent`;
+                                shellCommand = `cd ${escapedPath} && cursor-agent`;
                             }
                         }
                     } else {
-                        // Use claude command (default) or initialCommand if provided
-                        const command = initialCommand || 'claude';
-                        if (os.platform() === 'win32') {
+                        // Claude provider (default)
+                        // SEC-006: Validate initialCommand even in non-plain-shell mode
+                        let command = 'claude';
+                        if (initialCommand) {
+                            const cmdResult = validatePtyCommand(initialCommand);
+                            if (!cmdResult.valid) {
+                                console.warn(`[SECURITY] Rejected command in Claude mode: ${cmdResult.error}`);
+                                ws.send(JSON.stringify({
+                                    type: 'error',
+                                    message: cmdResult.error
+                                }));
+                                ws.close();
+                                return;
+                            }
+                            command = initialCommand;
+                        }
+
+                        if (isWindows) {
                             if (hasSession && sessionId) {
+                                // sessionId already validated by isValidSessionId
+                                const escapedSessionId = escapePowerShellArg(sessionId);
                                 // Try to resume session, but with fallback to new session if it fails
-                                shellCommand = `Set-Location -Path "${projectPath}"; claude --resume ${sessionId}; if ($LASTEXITCODE -ne 0) { claude }`;
+                                shellCommand = `Set-Location -Path ${escapedPath}; claude --resume ${escapedSessionId}; if ($LASTEXITCODE -ne 0) { claude }`;
                             } else {
-                                shellCommand = `Set-Location -Path "${projectPath}"; ${command}`;
+                                shellCommand = `Set-Location -Path ${escapedPath}; ${command}`;
                             }
                         } else {
                             if (hasSession && sessionId) {
-                                shellCommand = `cd "${projectPath}" && claude --resume ${sessionId} || claude`;
+                                // sessionId already validated by isValidSessionId
+                                const escapedSessionId = escapeShellArg(sessionId);
+                                shellCommand = `cd ${escapedPath} && claude --resume ${escapedSessionId} || claude`;
                             } else {
-                                shellCommand = `cd "${projectPath}" && ${command}`;
+                                shellCommand = `cd ${escapedPath} && ${command}`;
                             }
                         }
                     }
@@ -1121,11 +1366,43 @@ function handleShellConnection(ws) {
 
                     console.log('🟢 Shell process started with PTY, PID:', shellProcess.pid);
 
+                    // SEC-012: Create idle timeout handler
+                    const createIdleTimeout = () => {
+                        return setTimeout(() => {
+                            console.log(`[SECURITY] PTY session ${ptySessionKey} timed out after ${PTY_IDLE_TIMEOUT}ms of inactivity`);
+                            const session = ptySessionsMap.get(ptySessionKey);
+                            if (session) {
+                                if (session.ws && session.ws.readyState === WebSocket.OPEN) {
+                                    session.ws.send(JSON.stringify({
+                                        type: 'output',
+                                        data: `\r\n\x1b[33m[Session timed out due to inactivity]\x1b[0m\r\n`
+                                    }));
+                                }
+                                if (session.pty && session.pty.kill) {
+                                    session.pty.kill();
+                                }
+                                ptySessionsMap.delete(ptySessionKey);
+                            }
+                        }, PTY_IDLE_TIMEOUT);
+                    };
+
+                    // SEC-012: Reset idle timeout on activity
+                    const resetIdleTimeout = () => {
+                        const session = ptySessionsMap.get(ptySessionKey);
+                        if (session) {
+                            if (session.idleTimeoutId) {
+                                clearTimeout(session.idleTimeoutId);
+                            }
+                            session.idleTimeoutId = createIdleTimeout();
+                        }
+                    };
+
                     ptySessionsMap.set(ptySessionKey, {
                         pty: shellProcess,
                         ws: ws,
                         buffer: [],
                         timeoutId: null,
+                        idleTimeoutId: createIdleTimeout(), // SEC-012: Start idle timeout
                         projectPath,
                         sessionId
                     });
@@ -1196,8 +1473,9 @@ function handleShellConnection(ws) {
                                 data: `\r\n\x1b[33mProcess exited with code ${exitCode.exitCode}${exitCode.signal ? ` (${exitCode.signal})` : ''}\x1b[0m\r\n`
                             }));
                         }
-                        if (session && session.timeoutId) {
-                            clearTimeout(session.timeoutId);
+                        if (session) {
+                            if (session.timeoutId) clearTimeout(session.timeoutId);
+                            if (session.idleTimeoutId) clearTimeout(session.idleTimeoutId); // SEC-012
                         }
                         ptySessionsMap.delete(ptySessionKey);
                         shellProcess = null;
@@ -1212,6 +1490,25 @@ function handleShellConnection(ws) {
                 }
 
             } else if (data.type === 'input') {
+                // SEC-012: Reset idle timeout on user input
+                const session = ptySessionsMap.get(ptySessionKey);
+                if (session && session.idleTimeoutId) {
+                    clearTimeout(session.idleTimeoutId);
+                    session.idleTimeoutId = setTimeout(() => {
+                        console.log(`[SECURITY] PTY session ${ptySessionKey} timed out after ${PTY_IDLE_TIMEOUT}ms of inactivity`);
+                        if (session.ws && session.ws.readyState === WebSocket.OPEN) {
+                            session.ws.send(JSON.stringify({
+                                type: 'output',
+                                data: `\r\n\x1b[33m[Session timed out due to inactivity]\x1b[0m\r\n`
+                            }));
+                        }
+                        if (session.pty && session.pty.kill) {
+                            session.pty.kill();
+                        }
+                        ptySessionsMap.delete(ptySessionKey);
+                    }, PTY_IDLE_TIMEOUT);
+                }
+
                 // Send input to shell process
                 if (shellProcess && shellProcess.write) {
                     try {
@@ -1699,6 +1996,9 @@ app.get('*', (req, res) => {
   }
 });
 
+// SEC-010: Error sanitization middleware (must be after all routes)
+app.use(errorSanitizer);
+
 // Helper function to convert permissions to rwx format
 function permToRwx(perm) {
     const r = perm & 4 ? 'r' : '-';
@@ -1788,6 +2088,9 @@ const PORT = process.env.PORT || 3001;
 // Initialize database and start server
 async function startServer() {
     try {
+        // SEC-001, SEC-017: Validate security configuration before anything else
+        validateSecurityConfig();
+
         // Initialize authentication database
         await initializeDatabase();
 
@@ -1803,7 +2106,17 @@ async function startServer() {
             console.log(`${c.warn('[WARN]')} Note: Requests will be proxied to Vite dev server at ${c.dim('http://localhost:' + (process.env.VITE_PORT || 5173))}`);
         }
 
-        server.listen(PORT, '0.0.0.0', async () => {
+        // SEC-004: Warn if binding to all interfaces
+        if (BIND_HOST === '0.0.0.0') {
+            console.warn('');
+            console.warn(c.warn('═'.repeat(70)));
+            console.warn(`${c.warn('[SECURITY]')} Server binding to 0.0.0.0 (all interfaces)`);
+            console.warn(`${c.warn('[SECURITY]')} This exposes the server to the network. Use a reverse proxy in production.`);
+            console.warn(c.warn('═'.repeat(70)));
+            console.warn('');
+        }
+
+        server.listen(PORT, BIND_HOST, async () => {
             const appInstallPath = path.join(__dirname, '..');
 
             console.log('');
@@ -1811,7 +2124,7 @@ async function startServer() {
             console.log(`  ${c.bright('Claude Code UI Server - Ready')}`);
             console.log(c.dim('═'.repeat(63)));
             console.log('');
-            console.log(`${c.info('[INFO]')} Server URL:  ${c.bright('http://0.0.0.0:' + PORT)}`);
+            console.log(`${c.info('[INFO]')} Server URL:  ${c.bright(`http://${BIND_HOST}:${PORT}`)}`);
             console.log(`${c.info('[INFO]')} Installed at: ${c.dim(appInstallPath)}`);
             console.log(`${c.tip('[TIP]')}  Run "cloudcli status" for full configuration details`);
             console.log('');

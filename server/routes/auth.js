@@ -1,7 +1,15 @@
 import express from 'express';
 import bcrypt from 'bcrypt';
 import { userDb, db } from '../database/db.js';
-import { generateToken, authenticateToken } from '../middleware/auth.js';
+import {
+  generateToken,
+  generateAccessToken,
+  generateRefreshToken,
+  validateRefreshToken,
+  revokeUserRefreshTokens,
+  generateAuthTicket,
+  authenticateToken
+} from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -50,18 +58,21 @@ router.post('/register', async (req, res) => {
       // Create user
       const user = userDb.createUser(username, passwordHash);
       
-      // Generate token
-      const token = generateToken(user);
-      
+      // Generate tokens
+      const accessToken = generateAccessToken(user);
+      const refreshToken = await generateRefreshToken(user.id);
+
       // Update last login
       userDb.updateLastLogin(user.id);
 
       db.prepare('COMMIT').run();
-      
+
       res.json({
         success: true,
         user: { id: user.id, username: user.username },
-        token
+        token: accessToken,
+        accessToken,
+        refreshToken
       });
     } catch (error) {
       db.prepare('ROLLBACK').run();
@@ -100,18 +111,21 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid username or password' });
     }
     
-    // Generate token
-    const token = generateToken(user);
-    
+    // Generate tokens
+    const accessToken = generateAccessToken(user);
+    const refreshToken = await generateRefreshToken(user.id);
+
     // Update last login
     userDb.updateLastLogin(user.id);
-    
+
     res.json({
       success: true,
       user: { id: user.id, username: user.username },
-      token
+      token: accessToken,
+      accessToken,
+      refreshToken
     });
-    
+
   } catch (error) {
     console.error('Login error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -125,11 +139,83 @@ router.get('/user', authenticateToken, (req, res) => {
   });
 });
 
-// Logout (client-side token removal, but this endpoint can be used for logging)
+// SEC-002: Token refresh endpoint
+router.post('/refresh', async (req, res) => {
+  try {
+    const { refreshToken } = req.body;
+
+    if (!refreshToken) {
+      return res.status(400).json({ error: 'Refresh token is required' });
+    }
+
+    // Validate and consume refresh token
+    const userId = validateRefreshToken(refreshToken);
+    if (!userId) {
+      return res.status(401).json({ error: 'Invalid or expired refresh token' });
+    }
+
+    // Get user
+    const user = userDb.getUserById(userId);
+    if (!user) {
+      return res.status(401).json({ error: 'User not found' });
+    }
+
+    // Generate new tokens
+    const newAccessToken = generateAccessToken(user);
+    const newRefreshToken = await generateRefreshToken(user.id);
+
+    res.json({
+      success: true,
+      accessToken: newAccessToken,
+      refreshToken: newRefreshToken,
+      token: newAccessToken // Legacy alias
+    });
+
+  } catch (error) {
+    console.error('Token refresh error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// SEC-002: Logout - revoke refresh tokens
 router.post('/logout', authenticateToken, (req, res) => {
-  // In a simple JWT system, logout is mainly client-side
-  // This endpoint exists for consistency and potential future logging
-  res.json({ success: true, message: 'Logged out successfully' });
+  try {
+    // Revoke all refresh tokens for this user
+    revokeUserRefreshTokens(req.user.id);
+    res.json({ success: true, message: 'Logged out successfully' });
+  } catch (error) {
+    console.error('Logout error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// SEC-005: Generate auth ticket for WebSocket/SSE connections
+router.post('/ticket', authenticateToken, (req, res) => {
+  try {
+    const { purpose, context } = req.body;
+
+    // Validate purpose
+    const validPurposes = ['websocket', 'shell', 'sse-clone'];
+    if (!purpose || !validPurposes.includes(purpose)) {
+      return res.status(400).json({
+        error: 'Invalid purpose',
+        validPurposes
+      });
+    }
+
+    // Generate ticket
+    const { ticket, expiresIn } = generateAuthTicket(req.user.id, purpose, context || {});
+
+    res.json({
+      success: true,
+      ticket,
+      expiresIn
+    });
+
+  } catch (error) {
+    console.error('Ticket generation error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 export default router;

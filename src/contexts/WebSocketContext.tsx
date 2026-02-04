@@ -19,11 +19,40 @@ export const useWebSocket = () => {
   return context;
 };
 
-const buildWebSocketUrl = (token: string | null) => {
+const buildWebSocketUrl = (ticket: string | null) => {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   if (IS_PLATFORM) return `${protocol}//${window.location.host}/ws`; // Platform mode: Use same domain as the page (goes through proxy)
-  if (!token) return null;
-  return `${protocol}//${window.location.host}/ws?token=${encodeURIComponent(token)}`; // OSS mode: Use same host:port that served the page
+  if (!ticket) return null;
+  // SEC-005: Use ticket-based auth instead of token in URL
+  return `${protocol}//${window.location.host}/ws?ticket=${encodeURIComponent(ticket)}`;
+};
+
+/**
+ * Fetch a single-use ticket for WebSocket authentication
+ * SEC-005: Tickets are short-lived (30s) and single-use
+ */
+const fetchTicket = async (token: string): Promise<string | null> => {
+  try {
+    const response = await fetch('/api/auth/ticket', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ purpose: 'websocket' })
+    });
+
+    if (!response.ok) {
+      console.error('[WebSocket] Failed to get ticket:', response.status);
+      return null;
+    }
+
+    const data = await response.json();
+    return data.ticket;
+  } catch (error) {
+    console.error('[WebSocket] Error fetching ticket:', error);
+    return null;
+  }
 };
 
 const useWebSocketProviderState = (): WebSocketContextType => {
@@ -34,28 +63,34 @@ const useWebSocketProviderState = (): WebSocketContextType => {
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const { token } = useAuth();
 
-  useEffect(() => {
-    connect();
-    
-    return () => {
-      unmountedRef.current = true;
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
-      }
-      if (wsRef.current) {
-        wsRef.current.close();
-      }
-    };
-  }, [token]); // everytime token changes, we reconnect
-
-  const connect = useCallback(() => {
+  const connect = useCallback(async () => {
     if (unmountedRef.current) return; // Prevent connection if unmounted
-    try {
-      // Construct WebSocket URL
-      const wsUrl = buildWebSocketUrl(token);
 
-      if (!wsUrl) return console.warn('No authentication token found for WebSocket connection');
-      
+    try {
+      let wsUrl: string | null = null;
+
+      if (IS_PLATFORM) {
+        // Platform mode: no ticket needed
+        wsUrl = buildWebSocketUrl(null);
+      } else {
+        // OSS mode: fetch ticket first
+        if (!token) {
+          console.warn('[WebSocket] No authentication token available');
+          return;
+        }
+
+        const ticket = await fetchTicket(token);
+        if (!ticket) {
+          console.warn('[WebSocket] Failed to get WebSocket ticket');
+          return;
+        }
+
+        if (unmountedRef.current) return; // Check again after async operation
+        wsUrl = buildWebSocketUrl(ticket);
+      }
+
+      if (!wsUrl) return;
+
       const websocket = new WebSocket(wsUrl);
 
       websocket.onopen = () => {
@@ -75,7 +110,7 @@ const useWebSocketProviderState = (): WebSocketContextType => {
       websocket.onclose = () => {
         setIsConnected(false);
         wsRef.current = null;
-        
+
         // Attempt to reconnect after 3 seconds
         reconnectTimeoutRef.current = setTimeout(() => {
           if (unmountedRef.current) return; // Prevent reconnection if unmounted
@@ -90,6 +125,20 @@ const useWebSocketProviderState = (): WebSocketContextType => {
     } catch (error) {
       console.error('Error creating WebSocket connection:', error);
     }
+  }, [token]); // everytime token changes, we reconnect
+
+  useEffect(() => {
+    connect();
+
+    return () => {
+      unmountedRef.current = true;
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+    };
   }, [token]); // everytime token changes, we reconnect
 
   const sendMessage = useCallback((message: any) => {
@@ -114,7 +163,7 @@ const useWebSocketProviderState = (): WebSocketContextType => {
 
 export const WebSocketProvider = ({ children }: { children: React.ReactNode }) => {
   const webSocketData = useWebSocketProviderState();
-  
+
   return (
     <WebSocketContext.Provider value={webSocketData}>
       {children}

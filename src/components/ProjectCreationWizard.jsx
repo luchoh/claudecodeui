@@ -127,19 +127,44 @@ const ProjectCreationWizard = ({ onClose, onProjectCreated }) => {
 
     try {
       if (workspaceType === 'new' && githubUrl) {
+        // SEC-005: Use ticket-based auth for SSE
+        // Move GitHub credentials to ticket context (server-side only)
+        const token = localStorage.getItem('auth-token');
+        if (!token) {
+          throw new Error('Authentication required');
+        }
+
+        // Build ticket context with GitHub credentials
+        const ticketContext = {};
+        if (tokenMode === 'stored' && selectedGithubToken) {
+          ticketContext.githubTokenId = selectedGithubToken;
+        } else if (tokenMode === 'new' && newGithubToken) {
+          ticketContext.newGithubToken = newGithubToken.trim();
+        }
+
+        // Fetch ticket for SSE authentication
+        const ticketResponse = await fetch('/api/auth/ticket', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ purpose: 'sse-clone', context: ticketContext })
+        });
+
+        if (!ticketResponse.ok) {
+          throw new Error('Failed to get authentication ticket');
+        }
+
+        const { ticket } = await ticketResponse.json();
+
+        // Build URL without sensitive params - only path and githubUrl
         const params = new URLSearchParams({
           path: workspacePath.trim(),
           githubUrl: githubUrl.trim(),
         });
 
-        if (tokenMode === 'stored' && selectedGithubToken) {
-          params.append('githubTokenId', selectedGithubToken);
-        } else if (tokenMode === 'new' && newGithubToken) {
-          params.append('newGithubToken', newGithubToken.trim());
-        }
-
-        const token = localStorage.getItem('auth-token');
-        const url = `/api/projects/clone-progress?${params}${token ? `&token=${token}` : ''}`;
+        const url = `/api/projects/clone-progress?${params}&ticket=${encodeURIComponent(ticket)}`;
 
         await new Promise((resolve, reject) => {
           const eventSource = new EventSource(url);

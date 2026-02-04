@@ -12,6 +12,7 @@
     nodejs_20
     jq
     git
+    openssl  # For generating JWT_SECRET: openssl rand -base64 32
   ];
 
   languages.javascript = {
@@ -23,6 +24,29 @@
     "npm-install".exec = "npm install";
     "npm-build".exec = "npm run build";
     "npm-lint".exec = "npm run typecheck";
+    "generate-secret".exec = ''
+      secret=$(openssl rand -base64 32)
+      echo "Generated JWT_SECRET:"
+      echo ""
+      echo "JWT_SECRET=$secret"
+      echo ""
+      echo "Add this to your .env.dev file"
+    '';
+    "setup-env".exec = ''
+      if [ -f .env.dev ]; then
+        echo ".env.dev already exists. Remove it first if you want to regenerate."
+        exit 1
+      fi
+      cp .env.dev.example .env.dev
+      secret=$(openssl rand -base64 32)
+      if [[ "$OSTYPE" == "darwin"* ]]; then
+        sed -i "" "s/^JWT_SECRET=.*/JWT_SECRET=$secret/" .env.dev
+      else
+        sed -i "s/^JWT_SECRET=.*/JWT_SECRET=$secret/" .env.dev
+      fi
+      echo "Created .env.dev with generated JWT_SECRET"
+      echo "Review and customize other settings as needed."
+    '';
   };
 
   processes.server.exec = ''
@@ -31,9 +55,15 @@
 
     # Fail fast if profile not set up
     if [ ! -f .env.dev ]; then
+      echo "════════════════════════════════════════════════════════════════"
       echo "ERROR: .env.dev not found!"
-      echo "Run: cp .env.dev.example .env.dev"
-      echo "Then fill in your secrets."
+      echo "════════════════════════════════════════════════════════════════"
+      echo ""
+      echo "Setup instructions:"
+      echo "  1. cp .env.dev.example .env.dev"
+      echo "  2. Generate JWT_SECRET: openssl rand -base64 32"
+      echo "  3. Add the secret to .env.dev"
+      echo ""
       exit 1
     fi
 
@@ -66,12 +96,37 @@
       source .env.dev
       set +a
 
+      # Validate PORT
       if [ -z "$PORT" ] || ! printf '%s' "$PORT" | grep -Eq '^[0-9]+$'; then
         echo "PORT must be numeric" >&2
         exit 1
       fi
 
-      echo "Starting backend server on PORT=$PORT"
+      # SEC-001: Validate JWT_SECRET (must be 32+ chars)
+      if [ -z "''${JWT_SECRET:-}" ]; then
+        echo "════════════════════════════════════════════════════════════════"
+        echo "ERROR: JWT_SECRET is required in .env.dev"
+        echo "════════════════════════════════════════════════════════════════"
+        echo ""
+        echo "Generate one with: openssl rand -base64 32"
+        echo "Then add it to .env.dev:"
+        echo "  JWT_SECRET=your-generated-secret-here"
+        echo ""
+        exit 1
+      fi
+
+      jwt_len=''${#JWT_SECRET}
+      if [ "$jwt_len" -lt 32 ]; then
+        echo "════════════════════════════════════════════════════════════════"
+        echo "ERROR: JWT_SECRET must be at least 32 characters (current: $jwt_len)"
+        echo "════════════════════════════════════════════════════════════════"
+        echo ""
+        echo "Generate a proper secret: openssl rand -base64 32"
+        echo ""
+        exit 1
+      fi
+
+      echo "Starting backend server on PORT=$PORT (BIND_HOST=''${BIND_HOST:-127.0.0.1})"
 
       exec node server/index.js
     ) &
@@ -146,20 +201,56 @@
   '';
 
   enterShell = ''
-    echo "Claude Code UI development shell"
-    echo "PORT=$PORT"
-    echo "VITE_PORT=$VITE_PORT"
+    echo ""
+    echo "════════════════════════════════════════════════════════════════"
+    echo "  Claude Code UI - Development Shell"
+    echo "════════════════════════════════════════════════════════════════"
+    echo ""
+
+    # Check for .env.dev setup
+    if [ ! -f .env.dev ]; then
+      echo "⚠️  First-time setup required:"
+      echo ""
+      echo "  1. Copy example config:  cp .env.dev.example .env.dev"
+      echo "  2. Generate JWT secret:  openssl rand -base64 32"
+      echo "  3. Add secret to .env.dev: JWT_SECRET=<your-secret>"
+      echo ""
+    else
+      # Source .env.dev to show config
+      set -a
+      source .env.dev 2>/dev/null || true
+      set +a
+
+      echo "📁 PORT=''${PORT:-3001}"
+      echo "📁 VITE_PORT=''${VITE_PORT:-5173}"
+      echo "📁 BIND_HOST=''${BIND_HOST:-127.0.0.1}"
+
+      if [ -z "''${JWT_SECRET:-}" ]; then
+        echo "⚠️  JWT_SECRET not set in .env.dev"
+        echo "   Generate with: openssl rand -base64 32"
+      else
+        jwt_len=''${#JWT_SECRET}
+        if [ "$jwt_len" -lt 32 ]; then
+          echo "⚠️  JWT_SECRET too short ($jwt_len chars, need 32+)"
+        else
+          echo "✅ JWT_SECRET configured ($jwt_len chars)"
+        fi
+      fi
+      echo ""
+    fi
+
+    # Install dependencies if needed
     if [ ! -d node_modules ]; then
+      echo "📦 Installing dependencies..."
       npm install
     fi
-    echo ""
-    echo "Useful commands:"
-    echo "  devenv shell             # enter this shell again"
-    echo "  devenv up server         # run Express backend (port $PORT)"
-    echo "  devenv up client         # run Vite dev server (port $VITE_PORT)"
-    echo "  devenv up server client  # run both processes together"
-    echo "  npm run dev              # run both with concurrently"
+
+    echo "Commands:"
+    echo "  devenv up                # run server + client together"
+    echo "  devenv up server         # run Express backend only (port ''${PORT:-3001})"
+    echo "  devenv up client         # run Vite dev server only (port ''${VITE_PORT:-5173})"
     echo "  npm run build            # build for production"
     echo "  npm run typecheck        # run TypeScript type checking"
+    echo ""
   '';
 }

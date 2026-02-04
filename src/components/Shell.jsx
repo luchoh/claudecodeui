@@ -57,19 +57,40 @@ function Shell({ selectedProject, selectedSession, initialCommand, isPlainShell 
 
     try {
       let wsUrl;
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
 
       if (IS_PLATFORM) {
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         wsUrl = `${protocol}//${window.location.host}/shell`;
       } else {
+        // SEC-005: Use ticket-based auth instead of token in URL
         const token = localStorage.getItem('auth-token');
         if (!token) {
           console.error('No authentication token found for Shell WebSocket connection');
           return;
         }
 
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        wsUrl = `${protocol}//${window.location.host}/shell?token=${encodeURIComponent(token)}`;
+        // Fetch single-use ticket
+        try {
+          const ticketResponse = await fetch('/api/auth/ticket', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({ purpose: 'shell' })
+          });
+
+          if (!ticketResponse.ok) {
+            console.error('[Shell] Failed to get ticket:', ticketResponse.status);
+            return;
+          }
+
+          const { ticket } = await ticketResponse.json();
+          wsUrl = `${protocol}//${window.location.host}/shell?ticket=${encodeURIComponent(ticket)}`;
+        } catch (ticketError) {
+          console.error('[Shell] Error fetching ticket:', ticketError);
+          return;
+        }
       }
 
       ws.current = new WebSocket(wsUrl);

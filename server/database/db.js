@@ -75,12 +75,60 @@ const runMigrations = () => {
       db.exec('ALTER TABLE users ADD COLUMN has_completed_onboarding BOOLEAN DEFAULT 0');
     }
 
+    // SEC-002: Create refresh_tokens table for token refresh functionality
+    const refreshTokensTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='refresh_tokens'").all();
+    if (refreshTokensTable.length === 0) {
+      console.log('Running migration: Creating refresh_tokens table');
+      db.exec(`
+        CREATE TABLE refresh_tokens (
+          id TEXT PRIMARY KEY,
+          user_id INTEGER NOT NULL,
+          token_hash TEXT NOT NULL,
+          expires_at INTEGER NOT NULL,
+          created_at INTEGER DEFAULT (unixepoch()),
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX idx_refresh_tokens_user ON refresh_tokens(user_id);
+        CREATE INDEX idx_refresh_tokens_hash ON refresh_tokens(token_hash);
+      `);
+    }
+
+    // SEC-005: Create auth_tickets table for WebSocket/SSE ticket-based auth
+    const ticketsTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='auth_tickets'").all();
+    if (ticketsTable.length === 0) {
+      console.log('Running migration: Creating auth_tickets table');
+      db.exec(`
+        CREATE TABLE auth_tickets (
+          id TEXT PRIMARY KEY,
+          user_id INTEGER NOT NULL,
+          purpose TEXT NOT NULL,
+          context TEXT,
+          expires_at INTEGER NOT NULL,
+          created_at INTEGER DEFAULT (unixepoch()),
+          consumed INTEGER DEFAULT 0,
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX idx_tickets_expires ON auth_tickets(expires_at);
+      `);
+    }
+
     console.log('Database migrations completed successfully');
   } catch (error) {
     console.error('Error running migrations:', error.message);
     throw error;
   }
 };
+
+// Cleanup expired tickets and tokens periodically (every 60 seconds)
+setInterval(() => {
+  try {
+    const now = Math.floor(Date.now() / 1000);
+    db.prepare('DELETE FROM auth_tickets WHERE expires_at < ?').run(now);
+    db.prepare('DELETE FROM refresh_tokens WHERE expires_at < ?').run(now);
+  } catch (error) {
+    // Silently ignore cleanup errors (table might not exist yet during startup)
+  }
+}, 60000);
 
 // Initialize database with schema
 const initializeDatabase = async () => {
@@ -332,6 +380,104 @@ const credentialsDb = {
   }
 };
 
+// SEC-002: Refresh tokens database operations
+const refreshTokensDb = {
+  // Create a new refresh token
+  create: (id, userId, tokenHash, expiresAt) => {
+    try {
+      const stmt = db.prepare('INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at) VALUES (?, ?, ?, ?)');
+      stmt.run(id, userId, tokenHash, expiresAt);
+      return id;
+    } catch (err) {
+      throw err;
+    }
+  },
+
+  // Validate and consume a refresh token (returns userId or null)
+  validateAndConsume: (tokenId, tokenHash) => {
+    try {
+      const now = Math.floor(Date.now() / 1000);
+      const token = db.prepare(
+        'SELECT * FROM refresh_tokens WHERE id = ? AND token_hash = ? AND expires_at > ?'
+      ).get(tokenId, tokenHash, now);
+
+      if (!token) return null;
+
+      // Delete the used token (single-use)
+      db.prepare('DELETE FROM refresh_tokens WHERE id = ?').run(tokenId);
+
+      return token.user_id;
+    } catch (err) {
+      throw err;
+    }
+  },
+
+  // Delete all refresh tokens for a user (used on logout)
+  deleteAllForUser: (userId) => {
+    try {
+      db.prepare('DELETE FROM refresh_tokens WHERE user_id = ?').run(userId);
+    } catch (err) {
+      throw err;
+    }
+  },
+
+  // Delete a specific refresh token
+  delete: (tokenId) => {
+    try {
+      db.prepare('DELETE FROM refresh_tokens WHERE id = ?').run(tokenId);
+    } catch (err) {
+      throw err;
+    }
+  }
+};
+
+// SEC-005: Auth tickets database operations
+const ticketsDb = {
+  // Create a new auth ticket
+  create: (id, userId, purpose, context, expiresAt) => {
+    try {
+      const stmt = db.prepare('INSERT INTO auth_tickets (id, user_id, purpose, context, expires_at) VALUES (?, ?, ?, ?, ?)');
+      stmt.run(id, userId, purpose, JSON.stringify(context || {}), expiresAt);
+      return id;
+    } catch (err) {
+      throw err;
+    }
+  },
+
+  // Validate and consume a single-use ticket
+  validateAndConsume: (ticketId, expectedPurpose) => {
+    try {
+      const now = Math.floor(Date.now() / 1000);
+      const ticket = db.prepare(
+        'SELECT * FROM auth_tickets WHERE id = ? AND purpose = ? AND expires_at > ? AND consumed = 0'
+      ).get(ticketId, expectedPurpose, now);
+
+      if (!ticket) return null;
+
+      // Mark as consumed (single-use)
+      db.prepare('UPDATE auth_tickets SET consumed = 1 WHERE id = ?').run(ticketId);
+
+      return {
+        userId: ticket.user_id,
+        purpose: ticket.purpose,
+        context: JSON.parse(ticket.context || '{}')
+      };
+    } catch (err) {
+      throw err;
+    }
+  },
+
+  // Delete expired tickets (called by cleanup interval)
+  deleteExpired: () => {
+    try {
+      const now = Math.floor(Date.now() / 1000);
+      db.prepare('DELETE FROM auth_tickets WHERE expires_at < ?').run(now);
+    } catch (err) {
+      throw err;
+    }
+  }
+};
+
 // Backward compatibility - keep old names pointing to new system
 const githubTokensDb = {
   createGithubToken: (userId, tokenName, githubToken, description = null) => {
@@ -357,5 +503,7 @@ export {
   userDb,
   apiKeysDb,
   credentialsDb,
-  githubTokensDb // Backward compatibility
+  githubTokensDb, // Backward compatibility
+  refreshTokensDb,
+  ticketsDb
 };
