@@ -98,16 +98,28 @@ temp/
 # Local Netlify folder
 .netlify
 
-# AI specific
-.claude/
+# AI specific (keeping .claude/ and CLAUDE.md tracked for project config)
 .cursor/
 .roo/
 .taskmaster/
 .cline/
 .windsurf/
 .serena/
-CLAUDE.md
 .mcp.json
+
+# devenv/nix
+.devenv/
+.devenv.flake.nix
+devenv.lock
+result
+result-*
+
+# Environment files (secrets)
+.env.dev
+.env.test
+.env.staging
+.env.production
+.env.session
 
 
 # Database files
