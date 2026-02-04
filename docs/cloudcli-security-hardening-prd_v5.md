@@ -6,13 +6,28 @@
 - **Version**: 5.0
 - **Date**: 2026-02-04
 - **Author**: Security Audit Team
-- **Status**: Ready for Implementation
+- **Status**: ✅ IMPLEMENTATION COMPLETE (2026-02-04)
 - **Changes from v4**:
   - Added SEC-017: IS_PLATFORM startup validation
   - Expanded SEC-005: HTTP query param token removal (not just WS/SSE)
   - Clarified SEC-006: `initialCommand` injection vector (critical finding)
   - Corrected WORKSPACES_ROOT: needs implementation, not just validation
   - Updated severity counts based on code audit findings
+
+---
+
+## Current Status (2026-02-04)
+
+| Phase | Items | Status |
+|-------|-------|--------|
+| Phase 1: Critical (P0) | SEC-001, SEC-002, SEC-017 | ✅ Complete |
+| Phase 2: High (P1) | SEC-003, SEC-004, SEC-005, SEC-006, SEC-008, SEC-016 | ✅ Complete |
+| Phase 3: Medium (P2) | SEC-009, SEC-010, SEC-011, SEC-012, SEC-013, SEC-015 | ✅ Complete |
+| Manual Verification | Browser/log checks, VPN testing | ⚠️ Pending |
+
+**Implementation Commits:**
+- `ec39a0f` (2026-02-03): Comprehensive backend security hardening
+- `ed44dc7` (2026-02-04): SEC-011 keychain wiring + frontend token refresh
 
 ---
 
@@ -86,11 +101,11 @@ const JWT_SECRET = process.env.JWT_SECRET || 'claude-ui-dev-secret-change-in-pro
 3. Enforce minimum length of 32 characters.
 4. Provide clear error message with generation command: `openssl rand -base64 32`
 
-**Acceptance Criteria:**
-- [ ] Server refuses to start without JWT_SECRET env var
-- [ ] Server refuses to start if JWT_SECRET < 32 characters
-- [ ] Clear error message with generation instructions
-- [ ] No hardcoded secrets remain in codebase
+**Acceptance Criteria:** ✅
+- [x] Server refuses to start without JWT_SECRET env var
+- [x] Server refuses to start if JWT_SECRET < 32 characters
+- [x] Clear error message with generation instructions
+- [x] No hardcoded secrets remain in codebase
 
 ---
 
@@ -131,13 +146,13 @@ CREATE TABLE refresh_tokens (
 );
 ```
 
-**Acceptance Criteria:**
-- [ ] Access tokens include `exp` claim (15 minutes)
-- [ ] Refresh tokens stored hashed in database
-- [ ] `POST /api/auth/refresh` returns new access token
-- [ ] `POST /api/auth/logout` invalidates refresh token
-- [ ] Frontend handles token refresh automatically
-- [ ] Existing deployments migrate schema without crashing on startup
+**Acceptance Criteria:** ✅
+- [x] Access tokens include `exp` claim (15 minutes)
+- [x] Refresh tokens stored hashed in database
+- [x] `POST /api/auth/refresh` returns new access token
+- [x] `POST /api/auth/logout` invalidates refresh token
+- [x] Frontend handles token refresh automatically (ed44dc7: 401 interceptor + proactive refresh)
+- [x] Existing deployments migrate schema without crashing on startup
 
 ---
 
@@ -201,10 +216,10 @@ if (IS_PLATFORM) {
 }
 ```
 
-**Acceptance Criteria:**
-- [ ] Server refuses to start with `IS_PLATFORM=true` unless `ALLOW_PLATFORM_MODE=true`
-- [ ] Prominent warning logged when platform mode is active
-- [ ] Documentation updated to explain platform mode risks
+**Acceptance Criteria:** ✅
+- [x] Server refuses to start with `IS_PLATFORM=true` unless `ALLOW_PLATFORM_MODE=true`
+- [x] Prominent warning logged when platform mode is active
+- [x] Documentation updated to explain platform mode risks
 
 ---
 
@@ -227,10 +242,10 @@ app.use(cors());
 2. Default to `localhost:3001` and `localhost:5173`.
 3. Block all other origins (unless empty/null for non-browser clients).
 
-**Acceptance Criteria:**
-- [ ] CORS rejects requests from non-whitelisted origins
-- [ ] Default allows only localhost development ports
-- [ ] Requests without Origin header allowed (curl, mobile apps)
+**Acceptance Criteria:** ✅
+- [x] CORS rejects requests from non-whitelisted origins
+- [x] Default allows only localhost development ports
+- [x] Requests without Origin header allowed (curl, mobile apps)
 
 ---
 
@@ -251,10 +266,10 @@ server.listen(PORT, '0.0.0.0', async () => {
 2. Allow override via `BIND_HOST` env var.
 3. Log warning if binding to `0.0.0.0`.
 
-**Acceptance Criteria:**
-- [ ] Server binds to 127.0.0.1 by default
-- [ ] Warning logged when binding to non-localhost
-- [ ] Documentation updated with reverse proxy instructions
+**Acceptance Criteria:** ✅
+- [x] Server binds to 127.0.0.1 by default
+- [x] Warning logged when binding to non-localhost
+- [x] Documentation updated with reverse proxy instructions
 
 ---
 
@@ -349,13 +364,13 @@ function validateAndConsumeTicket(ticketId, expectedPurpose) {
 }
 ```
 
-**Acceptance Criteria:**
-- [ ] `POST /api/auth/ticket` endpoint implemented
-- [ ] Tickets are single-use and expire in 30 seconds
-- [ ] WebSocket uses ticket instead of JWT in URL
-- [ ] SSE uses ticket; sensitive data stored in ticket context
-- [ ] HTTP `?token=` query param support removed from auth middleware
-- [ ] No sensitive tokens appear in any URL
+**Acceptance Criteria:** ✅
+- [x] `POST /api/auth/ticket` endpoint implemented
+- [x] Tickets are single-use and expire in 30 seconds
+- [x] WebSocket uses ticket instead of JWT in URL
+- [x] SSE uses ticket; sensitive data stored in ticket context
+- [x] HTTP `?token=` query param support removed from auth middleware
+- [x] No sensitive tokens appear in any URL
 
 ---
 
@@ -483,15 +498,15 @@ shellProcess = pty.spawn(cmd, args, {
 });
 ```
 
-**Acceptance Criteria:**
-- [ ] WORKSPACES_ROOT supports comma-separated multiple roots
-- [ ] Paths outside allowed roots rejected with clear error
-- [ ] Path traversal attempts blocked (symlink resolution)
-- [ ] Command allowlist implemented and enforced
-- [ ] Unknown commands rejected with clear error
-- [ ] No shell string concatenation with user input
-- [ ] No `sh -c` / `bash -c` with user-provided commands (unless strict tokenization blocks shell metacharacters)
-- [ ] Audit log for rejected paths and commands
+**Acceptance Criteria:** ✅
+- [x] WORKSPACES_ROOT supports comma-separated multiple roots
+- [x] Paths outside allowed roots rejected with clear error
+- [x] Path traversal attempts blocked (symlink resolution)
+- [x] Command allowlist implemented and enforced
+- [x] Unknown commands rejected with clear error
+- [x] No shell string concatenation with user input
+- [x] No `sh -c` / `bash -c` with user-provided commands (unless strict tokenization blocks shell metacharacters)
+- [x] Audit log for rejected paths and commands
 
 ---
 
@@ -516,10 +531,10 @@ app.post('/api/system/update', authenticateToken, async (req, res) => {
 2. Log all update attempts with user info.
 3. Return 403 Forbidden when disabled.
 
-**Acceptance Criteria:**
-- [ ] Endpoint disabled unless `ENABLE_SYSTEM_UPDATE=true`
-- [ ] Returns 403 when disabled
-- [ ] All attempts logged with user and timestamp
+**Acceptance Criteria:** ✅
+- [x] Endpoint disabled unless `ENABLE_SYSTEM_UPDATE=true`
+- [x] Returns 403 when disabled
+- [x] All attempts logged with user and timestamp
 
 ---
 
@@ -646,43 +661,47 @@ frame-ancestors 'none';
 
 ## Implementation Plan
 
-### Sprint 1: Critical Auth Fixes (Day 1-2)
-- [ ] SEC-001: Remove hardcoded JWT secret
-- [ ] SEC-002: Implement refresh tokens
-- [ ] SEC-017: IS_PLATFORM startup validation
-- [ ] SEC-005: Ticket-based auth for WS/SSE/HTTP
+### Sprint 1: Critical Auth Fixes (Day 1-2) ✅ COMPLETE
+- [x] SEC-001: Remove hardcoded JWT secret (ec39a0f)
+- [x] SEC-002: Implement refresh tokens (ec39a0f backend, ed44dc7 frontend)
+- [x] SEC-017: IS_PLATFORM startup validation (ec39a0f)
+- [x] SEC-005: Ticket-based auth for WS/SSE/HTTP (ec39a0f)
 
-### Sprint 2: Command Injection & Network (Day 3-4)
-- [ ] SEC-006: Command allowlist + multi-root workspaces
-- [ ] SEC-003: CORS restriction
-- [ ] SEC-004: Localhost binding
-- [ ] SEC-008: Disable update endpoint
+### Sprint 2: Command Injection & Network (Day 3-4) ✅ COMPLETE
+- [x] SEC-006: Command allowlist + multi-root workspaces (ec39a0f)
+- [x] SEC-003: CORS restriction (ec39a0f)
+- [x] SEC-004: Localhost binding (ec39a0f)
+- [x] SEC-008: Disable update endpoint (ec39a0f)
 
-### Sprint 3: Hardening (Day 5)
-- [ ] SEC-009: Rate limiting
-- [ ] SEC-010: Error sanitization
-- [ ] SEC-011: Keychain credentials
-- [ ] SEC-012: PTY timeout
-- [ ] SEC-013: CSP headers
-- [ ] SEC-015: WS validation
+### Sprint 3: Hardening (Day 5) ✅ COMPLETE
+- [x] SEC-009: Rate limiting (ec39a0f)
+- [x] SEC-010: Error sanitization (ec39a0f)
+- [x] SEC-011: Keychain credentials (ec39a0f abstraction, ed44dc7 full wiring + frontend token refresh)
+- [x] SEC-012: PTY timeout (ec39a0f)
+- [x] SEC-013: CSP headers (ec39a0f)
+- [x] SEC-015: WS validation (ec39a0f)
+
+### Implementation Commits
+- `ec39a0f` (2026-02-03): Comprehensive security hardening (SEC-001 through SEC-017 backend)
+- `ed44dc7` (2026-02-04): SEC-011 keychain credential storage + frontend token refresh
 
 ---
 
 ## Verification Checklist
 
-### Automated Tests
-- [ ] Server fails to start without JWT_SECRET
-- [ ] Server fails to start with IS_PLATFORM=true without ALLOW_PLATFORM_MODE=true
-- [ ] Access tokens expire after 15 minutes
-- [ ] Refresh tokens can obtain new access tokens
-- [ ] Logout invalidates refresh token
-- [ ] Tickets are single-use
-- [ ] Tickets expire after 30 seconds
-- [ ] Paths outside WORKSPACES_ROOT are rejected
-- [ ] Commands not in allowlist are rejected
-- [ ] CORS rejects non-whitelisted origins
+### Automated Tests ✅
+- [x] Server fails to start without JWT_SECRET
+- [x] Server fails to start with IS_PLATFORM=true without ALLOW_PLATFORM_MODE=true
+- [x] Access tokens expire after 15 minutes
+- [x] Refresh tokens can obtain new access tokens
+- [x] Logout invalidates refresh token
+- [x] Tickets are single-use
+- [x] Tickets expire after 30 seconds
+- [x] Paths outside WORKSPACES_ROOT are rejected
+- [x] Commands not in allowlist are rejected
+- [x] CORS rejects non-whitelisted origins
 
-### Manual Verification
+### Manual Verification ⚠️ PENDING
 - [ ] No sensitive tokens in browser network tab URLs
 - [ ] No sensitive tokens in server access logs
 - [ ] Platform mode warning is prominent and scary
