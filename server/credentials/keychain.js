@@ -14,7 +14,9 @@ async function getKeytar() {
   if (keytar) return keytar;
 
   try {
-    keytar = await import('keytar');
+    const keytarModule = await import('keytar');
+    // Handle ES module default export
+    keytar = keytarModule.default || keytarModule;
     return keytar;
   } catch (error) {
     keytarError = new Error(

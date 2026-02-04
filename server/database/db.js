@@ -137,11 +137,28 @@ const initializeDatabase = async () => {
     db.exec(initSQL);
     console.log('Database initialized successfully');
     runMigrations();
+
+    // SEC-011: Migrate existing credentials to keychain (async, non-blocking)
+    migrateCredentialsToKeychainAsync();
   } catch (error) {
     console.error('Error initializing database:', error.message);
     throw error;
   }
 };
+
+/**
+ * SEC-011: Async migration of plaintext credentials to keychain
+ * Runs after database initialization without blocking startup
+ */
+async function migrateCredentialsToKeychainAsync() {
+  try {
+    const { migrateCredentialsToKeychain } = await import('../credentials/secureCredentials.js');
+    await migrateCredentialsToKeychain();
+  } catch (error) {
+    console.warn('[WARN] Credential migration failed:', error.message);
+    // Non-fatal - credentials will still work from DB fallback
+  }
+}
 
 // User database operations
 const userDb = {

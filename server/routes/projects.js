@@ -6,6 +6,7 @@ import os from 'os';
 import { addProjectManually } from '../projects.js';
 import { validateAuthTicket } from '../middleware/auth.js';
 import { userDb } from '../database/db.js';
+import { secureCredentialsService } from '../credentials/secureCredentials.js';
 
 const router = express.Router();
 
@@ -310,26 +311,26 @@ router.post('/create-workspace', async (req, res) => {
 });
 
 /**
- * Helper function to get GitHub token from database
+ * Helper function to get GitHub token from secure credential storage
+ * SEC-011: Now uses keychain-backed secure credentials service
  */
 async function getGithubTokenById(tokenId, userId) {
-  const { getDatabase } = await import('../database/db.js');
-  const db = await getDatabase();
+  // Get metadata to verify token exists and is active
+  const metadata = secureCredentialsService.getCredentialsMetadata(userId, 'github_token');
+  const credential = metadata.find(c => c.id === tokenId && c.is_active);
 
-  const credential = await db.get(
-    'SELECT * FROM user_credentials WHERE id = ? AND user_id = ? AND credential_type = ? AND is_active = 1',
-    [tokenId, userId, 'github_token']
-  );
+  if (!credential) return null;
+
+  // Get actual token value from secure storage (keychain or DB fallback)
+  const tokenValue = await secureCredentialsService.getCredentialValue(userId, tokenId);
+
+  if (!tokenValue) return null;
 
   // Return in the expected format (github_token field for compatibility)
-  if (credential) {
-    return {
-      ...credential,
-      github_token: credential.credential_value
-    };
-  }
-
-  return null;
+  return {
+    ...credential,
+    github_token: tokenValue
+  };
 }
 
 /**

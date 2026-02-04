@@ -1,7 +1,34 @@
 import { IS_PLATFORM } from "../constants/config";
+import { refreshAccessToken, shouldRefreshToken } from "./tokenRefresh";
 
-// Utility function for authenticated API calls
-export const authenticatedFetch = (url, options = {}) => {
+// Track if we're in the process of logging out to prevent refresh loops
+let isLoggingOut = false;
+
+/**
+ * Set the logging out flag (called by AuthContext during logout)
+ * @param {boolean} value
+ */
+export function setLoggingOut(value) {
+  isLoggingOut = value;
+}
+
+/**
+ * SEC-011: Authenticated fetch with automatic token refresh
+ * - Proactively refreshes token if it expires within 2 minutes
+ * - Handles 401 responses by refreshing token and retrying
+ * - Dispatches 'auth:logout' event on unrecoverable auth failures
+ */
+export const authenticatedFetch = async (url, options = {}) => {
+  // Proactive refresh if token expires soon (only in non-platform mode)
+  if (!IS_PLATFORM && !isLoggingOut && shouldRefreshToken()) {
+    try {
+      await refreshAccessToken();
+    } catch {
+      // Proactive refresh failed, continue with current token
+      // The actual request might still work, or we'll handle 401 below
+    }
+  }
+
   const token = localStorage.getItem('auth-token');
 
   const defaultHeaders = {};
@@ -15,13 +42,39 @@ export const authenticatedFetch = (url, options = {}) => {
     defaultHeaders['Authorization'] = `Bearer ${token}`;
   }
 
-  return fetch(url, {
+  let response = await fetch(url, {
     ...options,
     headers: {
       ...defaultHeaders,
       ...options.headers,
     },
   });
+
+  // Handle 401 Unauthorized: try to refresh and retry
+  if (response.status === 401 && !IS_PLATFORM && !isLoggingOut) {
+    try {
+      const newToken = await refreshAccessToken();
+
+      // Retry the original request with new token
+      response = await fetch(url, {
+        ...options,
+        headers: {
+          ...defaultHeaders,
+          ...options.headers,
+          'Authorization': `Bearer ${newToken}`,
+        },
+      });
+    } catch (refreshError) {
+      // Refresh failed - dispatch logout event for AuthContext to handle
+      window.dispatchEvent(new CustomEvent('auth:logout', {
+        detail: { reason: 'refresh_failed' }
+      }));
+
+      throw new Error('Session expired. Please log in again.');
+    }
+  }
+
+  return response;
 };
 
 // API endpoints

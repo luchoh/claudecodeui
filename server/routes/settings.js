@@ -1,5 +1,6 @@
 import express from 'express';
-import { apiKeysDb, credentialsDb } from '../database/db.js';
+import { apiKeysDb } from '../database/db.js';
+import { secureCredentialsService } from '../credentials/secureCredentials.js';
 
 const router = express.Router();
 
@@ -87,11 +88,28 @@ router.patch('/api-keys/:keyId/toggle', async (req, res) => {
 // Generic Credentials Management
 // ===============================
 
+// Get credential security status (keychain availability)
+router.get('/credentials/security-status', async (req, res) => {
+  try {
+    const keychainAvailable = await secureCredentialsService.isKeychainAvailable();
+    res.json({
+      keychainAvailable,
+      storageBackend: keychainAvailable ? 'keychain' : 'database',
+      warning: keychainAvailable
+        ? null
+        : 'System keychain not available. Credentials will be stored in plaintext database. Install keytar for secure storage.'
+    });
+  } catch (error) {
+    console.error('Error checking security status:', error);
+    res.status(500).json({ error: 'Failed to check security status' });
+  }
+});
+
 // Get all credentials for the authenticated user (optionally filtered by type)
 router.get('/credentials', async (req, res) => {
   try {
     const { type } = req.query;
-    const credentials = credentialsDb.getCredentials(req.user.id, type || null);
+    const credentials = secureCredentialsService.getCredentialsMetadata(req.user.id, type || null);
     // Don't send the actual credential values for security
     res.json({ credentials });
   } catch (error) {
@@ -117,7 +135,7 @@ router.post('/credentials', async (req, res) => {
       return res.status(400).json({ error: 'Credential value is required' });
     }
 
-    const result = credentialsDb.createCredential(
+    const result = await secureCredentialsService.createCredential(
       req.user.id,
       credentialName.trim(),
       credentialType.trim(),
@@ -125,13 +143,19 @@ router.post('/credentials', async (req, res) => {
       description?.trim() || null
     );
 
+    // Surface storage type so frontend can warn user if not using keychain
     res.json({
       success: true,
-      credential: result
+      credential: result,
+      storageType: result.storageType,
+      warning: result.storageType === 'database'
+        ? 'Credential stored in database (plaintext). Install keytar for secure keychain storage.'
+        : null
     });
   } catch (error) {
     console.error('Error creating credential:', error);
-    res.status(500).json({ error: 'Failed to create credential' });
+    // Surface the actual error message (includes keychain failures)
+    res.status(500).json({ error: error.message || 'Failed to create credential' });
   }
 });
 
@@ -139,7 +163,7 @@ router.post('/credentials', async (req, res) => {
 router.delete('/credentials/:credentialId', async (req, res) => {
   try {
     const { credentialId } = req.params;
-    const success = credentialsDb.deleteCredential(req.user.id, parseInt(credentialId));
+    const success = await secureCredentialsService.deleteCredential(req.user.id, parseInt(credentialId));
 
     if (success) {
       res.json({ success: true });
@@ -162,7 +186,7 @@ router.patch('/credentials/:credentialId/toggle', async (req, res) => {
       return res.status(400).json({ error: 'isActive must be a boolean' });
     }
 
-    const success = credentialsDb.toggleCredential(req.user.id, parseInt(credentialId), isActive);
+    const success = secureCredentialsService.toggleCredential(req.user.id, parseInt(credentialId), isActive);
 
     if (success) {
       res.json({ success: true });
