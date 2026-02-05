@@ -4,6 +4,38 @@ import { refreshAccessToken, shouldRefreshToken } from "./tokenRefresh";
 // Track if we're in the process of logging out to prevent refresh loops
 let isLoggingOut = false;
 
+// SEC-006: CSRF token cache
+let csrfToken = null;
+
+/**
+ * SEC-006: Get CSRF token for state-changing requests
+ * Caches the token to avoid repeated requests
+ */
+async function getCsrfToken() {
+  if (csrfToken) return csrfToken;
+
+  try {
+    const response = await fetch('/api/csrf-token', {
+      credentials: 'include'
+    });
+    if (response.ok) {
+      const data = await response.json();
+      csrfToken = data.csrfToken;
+      return csrfToken;
+    }
+  } catch (error) {
+    console.error('Failed to get CSRF token:', error);
+  }
+  return null;
+}
+
+/**
+ * Clear cached CSRF token (call on logout)
+ */
+export function clearCsrfToken() {
+  csrfToken = null;
+}
+
 /**
  * Set the logging out flag (called by AuthContext during logout)
  * @param {boolean} value
@@ -42,8 +74,18 @@ export const authenticatedFetch = async (url, options = {}) => {
     defaultHeaders['Authorization'] = `Bearer ${token}`;
   }
 
+  // SEC-006: Add CSRF token for state-changing requests
+  const method = (options.method || 'GET').toUpperCase();
+  if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
+    const csrf = await getCsrfToken();
+    if (csrf) {
+      defaultHeaders['x-csrf-token'] = csrf;
+    }
+  }
+
   let response = await fetch(url, {
     ...options,
+    credentials: 'include', // SEC-006: Include cookies for CSRF
     headers: {
       ...defaultHeaders,
       ...options.headers,
@@ -58,6 +100,7 @@ export const authenticatedFetch = async (url, options = {}) => {
       // Retry the original request with new token
       response = await fetch(url, {
         ...options,
+        credentials: 'include',
         headers: {
           ...defaultHeaders,
           ...options.headers,
