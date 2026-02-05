@@ -198,16 +198,16 @@ Key points from the user-supplied consensus summary:
 **Severity note**
 - Elevated to HIGH per stakeholder consensus because it amplifies confirmed XSS risk.
 
-### MEDIUM: Dependency vulnerabilities
+### MEDIUM: Dependency vulnerabilities - RESOLVED
 **Where**
-- `npm audit` reports 22 high, 18 moderate vulnerabilities.
+- `npm audit` initially reported 22 high, 18 moderate vulnerabilities.
 
-**Evidence**
-- Command: `npm audit --json > /tmp/claudecodeui-security-audit/npm-audit.json`
-- Output summary: `/tmp/claudecodeui-security-audit/npm-audit-summary.txt`.
+**Resolution**
+1. `npm audit fix` - Reduced to 8 vulnerabilities
+2. Upgraded `react-syntax-highlighter` 15.6.1 → 16.1.0 - Fixed prismjs DOM clobbering (3 moderate)
+3. Added `overrides.tar: "^7.5.7"` in package.json - Fixed tar symlink/path traversal (5 high)
 
-**Remediation**
-- Review `/tmp/claudecodeui-security-audit/npm-audit.json`, prioritize runtime dependencies, upgrade/patch, and add CI gating.
+**Final status:** 0 vulnerabilities
 
 ## Positive controls observed (static evidence)
 - JWT secret enforcement and platform-mode guardrails in `server/middleware/auth.js`.
