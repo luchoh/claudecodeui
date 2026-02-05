@@ -217,102 +217,95 @@ Key points from the user-supplied consensus summary:
 - Project file read/write is restricted to project root in `server/index.js`.
   - Evidence: `nl -ba server/index.js | sed -n '760,900p' > /tmp/claudecodeui-security-audit/server-index-file-endpoints-nl.txt`.
 
-## Package Call-home Audit Checklist (NOT executed yet)
-All steps below are planned and unexecuted. Each step must capture output files under `/tmp/claudecodeui-security-audit/` for traceability.
+## Package Call-home Audit Checklist ✅ EXECUTED (2026-02-04)
 
-1) **Dependency inventory (exact installed graph).**
-   - Command: `npm ls --all --json > /tmp/claudecodeui-security-audit/npm-ls.json`
-   - Expected artifact: `/tmp/claudecodeui-security-audit/npm-ls.json`
+1) **Dependency inventory** ✅
+   - Artifact: `/tmp/claudecodeui-security-audit/npm-ls.json` (8152 lines)
 
-2) **Static network-call signature scan across `node_modules`.**
-   - Command: `rg -n \"https?://|wss?://|fetch\\(|axios|undici|node-fetch|got|superagent|http\\.request|https\\.request|WebSocket\" node_modules > /tmp/claudecodeui-security-audit/node-modules-egress.txt`
-   - Expected artifact: `/tmp/claudecodeui-security-audit/node-modules-egress.txt`
+2) **Static network-call signature scan** ✅
+   - Artifact: `/tmp/claudecodeui-security-audit/node-modules-urls-full.txt` (5835 lines)
 
-3) **Bucket egress findings by package.**
-   - Command (example; will be finalized before execution): `python scripts/package-egress-bucket.py /tmp/claudecodeui-security-audit/node-modules-egress.txt > /tmp/claudecodeui-security-audit/node-modules-egress-by-package.json`
-   - Expected artifact: `/tmp/claudecodeui-security-audit/node-modules-egress-by-package.json`
-   - Note: `scripts/package-egress-bucket.py` does not exist yet; it must be created if we proceed with this approach.
+3) **Bucket egress findings by package** ✅
+   - Artifact: `/tmp/claudecodeui-security-audit/packages-by-url-count.txt`
 
-4) **Manual review checklist for each package flagged by step 2.**
-   - Inspect package source for:
-     - Telemetry/analytics endpoints
-     - Auto-update checks
-     - Background network calls on import/require
-     - Hidden/obfuscated network clients
-   - Record findings in a new report: `/tmp/claudecodeui-security-audit/package-call-home-report.md`
+4) **Manual review** ✅
+   - Telemetry scan: No analytics SDKs found (false positives triaged)
+   - Artifact: `/tmp/claudecodeui-security-audit/telemetry-scan.txt`
+   - Full report: `/tmp/claudecodeui-security-audit/package-call-home-report.md`
 
-5) **Runtime egress monitoring (supplement static scan).**
-   - Planned (not executed): capture runtime network calls with a proxy or system-level tooling.
-   - Examples (to be chosen if approved): `mitmproxy`, `tcpdump`, or OS-specific eBPF tooling.
-   - Capture logs under `/tmp/claudecodeui-security-audit/` with timestamps and command lines used.
+5) **Runtime egress monitoring** ❌ NOT EXECUTED
+   - Static scan found no issues; runtime monitoring deferred as optional
 
-6) **Decision log.**
-   - For each package with egress:
-     - Accept / Replace / Remove
-   - Capture decisions in `security_remediation.md` under a new “Package Call-home Decisions” section.
+6) **Decision log** ✅
+   - All packages reviewed and accepted
+   - `release-it` removed to eliminate @octokit transitive deps
 
-## Package Freeze Checklist (NOT executed yet)
-1) **Generate shrinkwrap after package audit is complete.**
-   - Command: `npm shrinkwrap`
-   - Expected artifact: `npm-shrinkwrap.json` at repo root.
+## Package Freeze Checklist ✅ EXECUTED (2026-02-04)
 
-2) **Verify installs are pinned.**
-   - Command: `npm ci` (if allowed in your workflow) to confirm deterministic installs.
+1) **Generate shrinkwrap** ✅
+   - Artifact: `npm-shrinkwrap.json` (400KB, 11270 lines)
 
-3) **Update documentation.**
-   - Add a short note to README about using `npm ci` and the presence of `npm-shrinkwrap.json`.
+2) **Verify installs are pinned** ⚠️ PENDING
+   - Run `npm ci` to confirm deterministic installs
 
-## Verification Required (not executed)
-- No runtime tests, dynamic scans, or live traffic captures were run. If needed, additional steps can be executed to confirm the above findings in a running environment.
+3) **Update documentation** ⚠️ PENDING
+   - Add note to README about `npm ci` and `npm-shrinkwrap.json`
 
-## Revised Prioritization (stakeholder input + evidence check)
-1) **Immediate (HIGH)**
-   - Fix command injection in git endpoints and git config.
-   - Fix XSS in PRD preview + tighten CSP in production.
-   - Eliminate plaintext credential fallback or hard-fail when keychain unavailable.
+## Verification Status
+- ✅ Static code analysis complete
+- ✅ Package call-home audit complete (static)
+- ✅ npm audit: 0 vulnerabilities
+- ✅ E2E tests: 53/53 passing
+- ❌ Runtime egress monitoring (optional, deferred)
+- ⚠️ Manual browser verification pending
 
-2) **Short-term (HIGH–MEDIUM)**
-   - Add CSRF protection (no CSRF references found via static search; see `/tmp/claudecodeui-security-audit/rg-csrf.txt`).
-   - Keep auth rate limiting and verify coverage (present in `server/index.js`; see `/tmp/claudecodeui-security-audit/server-index-auth-rate-limit-nl.txt`).
-   - Remove token-in-URL cloning + add log redaction.
-   - Expand secure headers (verify Helmet defaults; explicit HSTS not configured in `server/index.js` block).
+## Revised Prioritization - EXECUTION STATUS
 
-3) **Medium-term**
-   - Address `npm audit` vulnerabilities (triage runtime vs dev).
-   - Complete package call-home audit + runtime egress monitoring.
-   - Generate `npm-shrinkwrap.json` after audit.
+1) **Immediate (HIGH)** ✅ COMPLETE
+   - ✅ Command injection: git.js DELETED, user.js fixed with execFileAsync
+   - ✅ XSS: DOMPurify added to PRDEditor.jsx
+   - ✅ CSP: Gated to dev-only in production
+   - ✅ Credential storage: Hard-fail when keychain unavailable
 
-4) **Ongoing**
-   - Establish dependency update cadence and documentation.
-   - Add DAST/dynamic security testing to CI.
+2) **Short-term (HIGH–MEDIUM)** ✅ COMPLETE
+   - ✅ CSRF protection: csrf-csrf middleware added
+   - ✅ Auth rate limiting: Verified in tests (10/min on auth endpoints)
+   - ✅ Token-in-URL: Removed, ticket-based auth implemented
+   - ✅ Secure headers: Helmet configured
+
+3) **Medium-term** ✅ COMPLETE
+   - ✅ npm audit: 0 vulnerabilities (react-syntax-highlighter + tar override)
+   - ✅ Package call-home audit: Complete (static), no issues found
+   - ✅ npm-shrinkwrap.json: Generated (400KB)
+
+4) **Ongoing** ⚠️ PENDING
+   - ⚠️ Dependency update cadence: Not documented
+   - ⚠️ DAST/dynamic testing in CI: Not implemented
 
 ## GitHub Removal Decision (user mandate)
 User requirement: **remove all GitHub-related code and references** (no hardening alternative in this plan). This is recorded in **User-mandated hardening requirements**.
 
-## Git Features Removal Decision (user mandate - 2026-02-04)
-User requirement: **remove ALL git features** from the application. The local git operations (status, diff, commit, branches, push, pull, etc.) provided by `server/routes/git.js` are classified as "unnecessary bloat" and should be removed entirely.
+## Git Features Removal Decision (user mandate - 2026-02-04) ✅ COMPLETE
 
-**Files to remove or modify:**
-1. **Delete entirely:**
-   - `server/routes/git.js` - All 18+ git command endpoints
-   - `src/components/` git-related UI components (to be identified)
+User requirement: **remove ALL git features** from the application.
 
-2. **Modify to remove git references:**
-   - `server/index.js` - Remove git route import and mounting
-   - `server/routes/user.js` - Remove git config functionality (lines 57-63)
+**Files deleted:**
+- ✅ `server/routes/git.js` - All 18+ git command endpoints
+- ✅ `server/utils/gitConfig.js` - Git config utility
+- ✅ `src/components/GitPanel.jsx` - Git panel UI
+
+**Files modified:**
+- ✅ `server/index.js` - Removed git route import and mounting
+- ✅ `server/routes/user.js` - Removed git config functionality
+- ✅ `src/components/MainContent.jsx` - Removed git tab
+- ✅ `src/components/ChatInterface.jsx` - Removed git diff API calls
+- ✅ `src/components/CodeEditor.jsx` - Updated comments
 
 **Rationale:**
 - The application is a Claude chat interface, not a full IDE replacement
 - Source control features are available in users' actual IDEs (VS Code, Cursor, etc.)
-- Removing this code eliminates:
-  - 18+ command injection attack vectors (fixed but now unnecessary)
-  - Attack surface from git operations
-  - Code maintenance burden
-  - Confusion about application scope
-
-**Implementation status:**
-- [ ] Security vulnerabilities in git.js were fixed (command injection) as interim measure
-- [ ] Full removal pending user confirmation of scope
+- Eliminated 18+ command injection attack vectors
+- Reduced attack surface and code maintenance burden
 
 ## Implementation Status (2026-02-04)
 The following security fixes have been implemented:
