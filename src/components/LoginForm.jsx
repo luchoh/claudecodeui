@@ -64,6 +64,9 @@ const LoginForm = () => {
                 placeholder={t('login.placeholders.username')}
                 required
                 disabled={isLoading}
+                autoCapitalize="none"
+                autoCorrect="off"
+                autoComplete="username"
               />
             </div>
 

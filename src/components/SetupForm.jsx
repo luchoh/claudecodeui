@@ -71,6 +71,9 @@ const SetupForm = () => {
                 placeholder="Enter your username"
                 required
                 disabled={isLoading}
+                autoCapitalize="none"
+                autoCorrect="off"
+                autoComplete="username"
               />
             </div>
 
