@@ -2,14 +2,14 @@ import { useState, useEffect } from 'react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Badge } from './ui/badge';
-import { X, Plus, Settings as SettingsIcon, Shield, AlertTriangle, Moon, Sun, Server, Edit3, Trash2, Globe, Terminal, Zap, FolderOpen, LogIn, Key, GitBranch, Check } from 'lucide-react';
+import { X, Plus, Settings as SettingsIcon, Shield, AlertTriangle, Moon, Sun, Server, Edit3, Trash2, Globe, Terminal, Zap, FolderOpen, LogIn, Key, Check } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
 import { useTranslation } from 'react-i18next';
 import ClaudeLogo from './ClaudeLogo';
 import CursorLogo from './CursorLogo';
 import CodexLogo from './CodexLogo';
 import CredentialsSettings from './CredentialsSettings';
-import GitSettings from './GitSettings';
+// SEC-007: GitSettings removed - git features removed per security hardening
 import TasksSettings from './TasksSettings';
 import LoginModal from './LoginModal';
 import { authenticatedFetch } from '../utils/api';
@@ -987,17 +987,7 @@ function Settings({ isOpen, onClose, projects = [], initialTab = 'agents' }) {
               >
                 {t('mainTabs.appearance')}
               </button>
-              <button
-                onClick={() => setActiveTab('git')}
-                className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
-                  activeTab === 'git'
-                    ? 'border-blue-600 text-blue-600 dark:text-blue-400'
-                    : 'border-transparent text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                <GitBranch className="w-4 h-4 inline mr-2" />
-                {t('mainTabs.git')}
-              </button>
+              {/* SEC-007: Git tab removed - git features removed per security hardening */}
               <button
                 onClick={() => setActiveTab('api')}
                 className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
@@ -1251,8 +1241,7 @@ function Settings({ isOpen, onClose, projects = [], initialTab = 'agents' }) {
               </div>
             )}
 
-            {/* Git Tab */}
-            {activeTab === 'git' && <GitSettings />}
+            {/* SEC-007: Git Tab removed - git features removed per security hardening */}
 
             {/* Agents Tab */}
             {activeTab === 'agents' && (
