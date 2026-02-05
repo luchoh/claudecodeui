@@ -452,4 +452,4 @@ Key findings:
 
 **Dependencies:**
 - Added: `dompurify`, `csrf-csrf`, `@types/dompurify`
-- Removed: `@octokit/rest`
+- Removed: `@octokit/rest`, `release-it`, `auto-changelog` (eliminates all @octokit transitive deps)
