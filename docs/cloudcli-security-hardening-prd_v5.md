@@ -23,6 +23,7 @@
 | Phase 1: Critical (P0) | SEC-001, SEC-002, SEC-017 | ✅ Complete |
 | Phase 2: High (P1) | SEC-003, SEC-004, SEC-005, SEC-006, SEC-008, SEC-016 | ✅ Complete |
 | Phase 3: Medium (P2) | SEC-009, SEC-010, SEC-011, SEC-012, SEC-013, SEC-015 | ✅ Complete |
+| E2E Test Suite | Automated security tests | ❌ Not Implemented |
 | Manual Verification | Browser/log checks, VPN testing | ⚠️ Pending |
 
 **Implementation Commits:**
@@ -689,7 +690,8 @@ frame-ancestors 'none';
 
 ## Verification Checklist
 
-### Automated Tests ✅
+### Manual API Tests (ad-hoc curl) ✅
+These were verified manually via curl commands, not automated tests:
 - [x] Server fails to start without JWT_SECRET
 - [x] Server fails to start with IS_PLATFORM=true without ALLOW_PLATFORM_MODE=true
 - [x] Access tokens expire after 15 minutes
@@ -700,12 +702,138 @@ frame-ancestors 'none';
 - [x] Paths outside WORKSPACES_ROOT are rejected
 - [x] Commands not in allowlist are rejected
 - [x] CORS rejects non-whitelisted origins
+- [x] Credentials stored in macOS Keychain (not plaintext DB)
+- [x] Credential deletion removes from both keychain and DB
 
 ### Manual Verification ⚠️ PENDING
 - [ ] No sensitive tokens in browser network tab URLs
 - [ ] No sensitive tokens in server access logs
 - [ ] Platform mode warning is prominent and scary
 - [ ] VPN access works with all security controls enabled
+
+---
+
+## E2E Test Suite ⚠️ NOT IMPLEMENTED
+
+**Status**: No automated e2e tests exist. This section defines required test coverage.
+
+### Test Framework
+
+| Component | Tool | Rationale |
+|-----------|------|-----------|
+| API Tests | Vitest + supertest | Fast, TypeScript-native, same toolchain as frontend |
+| Browser Tests | Playwright | MCP integration available, cross-browser support |
+| Test Database | SQLite in-memory | Isolation between test runs |
+
+### Test Directory Structure
+
+```
+tests/
+├── e2e/
+│   ├── setup.ts              # Test fixtures, auth helpers, DB setup
+│   ├── auth.spec.ts          # SEC-001, SEC-002, SEC-017
+│   ├── credentials.spec.ts   # SEC-011
+│   ├── security.spec.ts      # SEC-003, SEC-004, SEC-005, SEC-009
+│   └── shell.spec.ts         # SEC-006, SEC-008, SEC-012
+├── vitest.config.ts
+└── playwright.config.ts
+```
+
+### SEC-011: Credential Storage Tests
+
+| Test Case | Description | Verification |
+|-----------|-------------|--------------|
+| `keychain-available` | Check security status endpoint | `keychainAvailable: true` on macOS with keytar |
+| `credential-create-keychain` | Create credential stores in keychain | DB has `[KEYCHAIN]` placeholder, `security find-generic-password` finds entry |
+| `credential-retrieve` | Retrieve credential value | Value matches original (fetched from keychain) |
+| `credential-delete-cleanup` | Delete removes from both stores | DB row gone, keychain entry gone |
+| `credential-list-no-values` | List endpoint hides values | Response contains metadata only, no `credential_value` field |
+| `fallback-no-keychain` | Graceful fallback when keytar unavailable | `storageType: "database"`, warning in response |
+
+### SEC-002: Token Refresh Tests
+
+| Test Case | Description | Verification |
+|-----------|-------------|--------------|
+| `access-token-expiry` | Access token expires | 401 after expiry time |
+| `refresh-token-works` | Refresh endpoint returns new tokens | New access token valid, old one still invalid |
+| `refresh-token-rotation` | Refresh token is single-use | Second use of same refresh token fails |
+| `refresh-token-revocation` | Logout invalidates refresh token | Refresh fails after logout |
+| `401-interceptor-retry` | Frontend retries on 401 | Request succeeds after automatic refresh |
+| `concurrent-401-single-refresh` | Multiple 401s share one refresh | Network tab shows only one `/api/auth/refresh` call |
+| `proactive-refresh` | Token refreshed before expiry | No 401 when token < 2 min from expiry |
+
+### SEC-005: Ticket System Tests
+
+| Test Case | Description | Verification |
+|-----------|-------------|--------------|
+| `ticket-create` | Create ticket for WebSocket | Returns ticket ID, expires in 30s |
+| `ticket-single-use` | Ticket consumed on use | Second use fails |
+| `ticket-expiry` | Ticket expires after 30s | Use after 31s fails |
+| `ticket-purpose-validation` | Wrong purpose rejected | WebSocket ticket rejected for SSE |
+| `ws-connection-with-ticket` | WebSocket connects via ticket | Connection established, ticket consumed |
+| `no-token-in-url` | JWT never in URL | All authenticated requests use Authorization header |
+
+### SEC-009: Rate Limiting Tests
+
+| Test Case | Description | Verification |
+|-----------|-------------|--------------|
+| `auth-rate-limit` | Auth endpoints limited to 10/min | 429 on 11th request |
+| `api-rate-limit` | API endpoints limited to 100/min | 429 on 101st request |
+| `rate-limit-reset` | Limits reset after window | Requests succeed after 60s |
+
+### SEC-006: Shell Security Tests
+
+| Test Case | Description | Verification |
+|-----------|-------------|--------------|
+| `path-validation` | Paths outside WORKSPACES_ROOT rejected | Error message, connection closed |
+| `command-allowlist` | Unknown commands rejected | Error message, connection closed |
+| `metachar-blocked` | Shell metacharacters rejected | `; && | \` etc. cause rejection |
+| `symlink-traversal` | Symlink escape attempts blocked | Symlink pointing outside root rejected |
+
+### Running Tests
+
+```bash
+# Install test dependencies
+npm install -D vitest @vitest/coverage-v8 supertest playwright @playwright/test
+
+# Run API tests
+npm run test:api
+
+# Run browser tests (requires running server)
+npm run test:e2e
+
+# Run all tests with coverage
+npm run test:coverage
+```
+
+### CI Integration
+
+```yaml
+# .github/workflows/test.yml
+name: Security Tests
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: macos-latest  # Required for keychain tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+      - run: npm run test:api
+      - run: npx playwright install
+      - run: npm run test:e2e
+```
+
+### Acceptance Criteria
+
+- [ ] Test suite runs in CI on every PR
+- [ ] All SEC-011 credential tests pass
+- [ ] All SEC-002 token refresh tests pass
+- [ ] All SEC-005 ticket tests pass
+- [ ] Coverage report shows >80% on security-critical paths
+- [ ] Tests use isolated database (no production data)
 
 ---
 

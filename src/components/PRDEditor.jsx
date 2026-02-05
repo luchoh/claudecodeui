@@ -6,6 +6,8 @@ import { EditorView } from '@codemirror/view';
 import { X, Save, Download, Maximize2, Minimize2, Eye, FileText, Sparkles, AlertTriangle } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { api, authenticatedFetch } from '../utils/api';
+// SEC-002: Import DOMPurify for XSS protection
+import DOMPurify from 'dompurify';
 
 const PRDEditor = ({ 
   file, 
@@ -489,8 +491,9 @@ This document outlines the requirements for building an AI-powered task manageme
   }, [content]);
 
   // Simple markdown to HTML converter for preview
-  const renderMarkdown = (markdown) => {
-    return markdown
+  // SEC-002: Sanitize output with DOMPurify to prevent XSS
+  const renderMarkdown = (markdownText) => {
+    const html = markdownText
       .replace(/^### (.*$)/gim, '<h3>$1</h3>')
       .replace(/^## (.*$)/gim, '<h2>$1</h2>')
       .replace(/^# (.*$)/gim, '<h1>$1</h1>')
@@ -501,6 +504,12 @@ This document outlines the requirements for building an AI-powered task manageme
       .replace(/\n\n/gim, '</p><p>')
       .replace(/^(?!<[h|u|l])(.*$)/gim, '<p>$1</p>')
       .replace(/<\/ul>\s*<ul>/gim, '');
+
+    // SEC-002: Sanitize HTML to prevent XSS attacks
+    return DOMPurify.sanitize(html, {
+      ALLOWED_TAGS: ['h1', 'h2', 'h3', 'p', 'strong', 'em', 'ul', 'li'],
+      ALLOWED_ATTR: []
+    });
   };
 
   if (loading) {

@@ -37,6 +37,7 @@ import os from 'os';
 import http from 'http';
 import cors from 'cors';
 import helmet from 'helmet';
+import { doubleCsrf } from 'csrf-csrf';
 import { promises as fsPromises } from 'fs';
 import { spawn } from 'child_process';
 import pty from 'node-pty';
@@ -47,7 +48,7 @@ import { getProjects, getSessions, getSessionMessages, renameProject, deleteSess
 import { queryClaudeSDK, abortClaudeSDKSession, isClaudeSDKSessionActive, getActiveClaudeSDKSessions, resolveToolApproval } from './claude-sdk.js';
 import { spawnCursor, abortCursorSession, isCursorSessionActive, getActiveCursorSessions } from './cursor-cli.js';
 import { queryCodex, abortCodexSession, isCodexSessionActive, getActiveCodexSessions } from './openai-codex.js';
-import gitRoutes from './routes/git.js';
+// SEC-007: Git routes removed per user mandate (unnecessary bloat)
 import authRoutes from './routes/auth.js';
 import mcpRoutes from './routes/mcp.js';
 import cursorRoutes from './routes/cursor.js';
@@ -56,7 +57,8 @@ import mcpUtilsRoutes from './routes/mcp-utils.js';
 import commandsRoutes from './routes/commands.js';
 import settingsRoutes from './routes/settings.js';
 import agentRoutes from './routes/agent.js';
-import projectsRoutes, { WORKSPACES_ROOT, validateWorkspacePath, cloneProgressHandler } from './routes/projects.js';
+import projectsRoutes, { WORKSPACES_ROOT, validateWorkspacePath } from './routes/projects.js';
+// SEC-007: cloneProgressHandler removed - GitHub cloning functionality removed per user mandate
 import cliAuthRoutes from './routes/cli-auth.js';
 import userRoutes from './routes/user.js';
 import codexRoutes from './routes/codex.js';
@@ -348,13 +350,20 @@ app.use(cors({
   credentials: true
 }));
 
-// SEC-013: Security headers with Content Security Policy
+// SEC-005: Security headers with Content Security Policy
+// Gate unsafe-inline/eval to development only
+const isDev = process.env.NODE_ENV !== 'production';
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"], // Required for React dev
-      styleSrc: ["'self'", "'unsafe-inline'"], // Required for some UI libs
+      // SEC-005: Only allow unsafe-inline/eval in development (required for React dev tools)
+      scriptSrc: isDev
+        ? ["'self'", "'unsafe-inline'", "'unsafe-eval'"]
+        : ["'self'"],
+      styleSrc: isDev
+        ? ["'self'", "'unsafe-inline'"]
+        : ["'self'"],
       connectSrc: ["'self'", "ws:", "wss:", "http:", "https:"], // WebSocket connections
       imgSrc: ["'self'", "data:", "blob:", "https:"],
       fontSrc: ["'self'", "data:"],
@@ -368,6 +377,36 @@ app.use(helmet({
 
 // SEC-009: Apply general rate limiting to all API routes
 app.use('/api', generalRateLimiter);
+
+// SEC-006: CSRF protection for state-changing operations
+const isProduction = process.env.NODE_ENV === 'production';
+const { doubleCsrfProtection, generateToken } = doubleCsrf({
+  getSecret: () => process.env.CSRF_SECRET || process.env.JWT_SECRET || 'csrf-secret-change-in-production',
+  cookieName: isProduction ? '__Host-csrf' : 'csrf',
+  cookieOptions: {
+    httpOnly: true,
+    sameSite: 'strict',
+    secure: isProduction,
+    path: '/'
+  },
+  size: 64,
+  ignoredMethods: ['GET', 'HEAD', 'OPTIONS'],
+  getTokenFromRequest: (req) => req.headers['x-csrf-token']
+});
+
+// SEC-006: Route to get CSRF token (must be called before state-changing requests)
+app.get('/api/csrf-token', (req, res) => {
+  const token = generateToken(req, res);
+  res.json({ csrfToken: token });
+});
+
+// SEC-006: Apply CSRF protection to state-changing API routes
+// Exclude routes that use their own auth (agent API uses API keys, WebSocket uses tickets)
+app.use('/api/projects', doubleCsrfProtection);
+// SEC-007: Git CSRF protection removed (git routes removed)
+app.use('/api/settings', doubleCsrfProtection);
+app.use('/api/user', doubleCsrfProtection);
+app.use('/api/taskmaster', doubleCsrfProtection);
 
 app.use(express.json({
   limit: '50mb',
@@ -396,15 +435,12 @@ app.use('/api', validateApiKey);
 // Authentication routes (public, with stricter rate limiting)
 app.use('/api/auth', authRateLimiter, authRoutes);
 
-// SEC-005: Clone-progress uses ticket-only auth (EventSource can't send headers)
-// Must be mounted BEFORE the authenticated /api/projects routes
-app.get('/api/projects/clone-progress', cloneProgressHandler);
+// SEC-007: Clone-progress route removed - GitHub cloning functionality removed per user mandate
 
 // Projects API Routes (protected)
 app.use('/api/projects', authenticateToken, projectsRoutes);
 
-// Git API Routes (protected)
-app.use('/api/git', authenticateToken, gitRoutes);
+// SEC-007: Git API Routes removed per user mandate
 
 // MCP API Routes (protected)
 app.use('/api/mcp', authenticateToken, mcpRoutes);

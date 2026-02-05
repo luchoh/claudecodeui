@@ -34,23 +34,30 @@ export const secureCredentialsService = {
 
   /**
    * Create a new credential with secure storage
+   * SEC-004: Hard-fail when keychain unavailable - no plaintext fallback
    * @param {number} userId - The user ID
    * @param {string} name - The credential name
    * @param {string} type - The credential type (e.g., 'github_token')
-   * @param {string} value - The credential value (will be stored in keychain if available)
+   * @param {string} value - The credential value (will be stored in keychain)
    * @param {string|null} description - Optional description
-   * @returns {Promise<{id: number, credentialName: string, credentialType: string, storageType: 'keychain'|'database'}>}
-   * @throws {Error} If keychain is available but write fails (fail-fast, no silent fallback)
+   * @returns {Promise<{id: number, credentialName: string, credentialType: string, storageType: 'keychain'}>}
+   * @throws {Error} If keychain is unavailable or write fails (no plaintext fallback)
    */
   async createCredential(userId, name, type, value, description = null) {
     const keychainAvailable = await this.isKeychainAvailable();
 
+    // SEC-004: Hard-fail when keychain is not available - no plaintext storage allowed
     if (!keychainAvailable) {
-      // EXPLICIT fallback: keychain not installed/available - warn loudly but allow DB storage
-      console.warn(`[SECURITY WARNING] Keychain not available. Credential "${name}" will be stored in plaintext database.`);
+      throw new Error(
+        'Keychain not available. Cannot store credentials in plaintext. ' +
+        'Please install keytar and ensure keychain access is configured. ' +
+        'On macOS, ensure Keychain Access is available. ' +
+        'On Linux, install libsecret. ' +
+        'On Windows, ensure Credential Manager is accessible.'
+      );
     }
 
-    const storedValue = keychainAvailable ? KEYCHAIN_PLACEHOLDER : value;
+    const storedValue = KEYCHAIN_PLACEHOLDER;
 
     const result = db.prepare(
       'INSERT INTO user_credentials (user_id, credential_name, credential_type, credential_value, description) VALUES (?, ?, ?, ?, ?)'

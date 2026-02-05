@@ -291,7 +291,7 @@ function CodeEditor({ file, onClose, projectPath, isSidebar = false, isExpanded 
         setLoading(true);
 
         // If we have diffInfo with both old and new content, we can show the diff directly
-        // This handles both GitPanel (full content) and ChatInterface (full content from API)
+        // SEC-007: GitPanel removed - this now only handles diffInfo from other sources
         if (file.diffInfo && file.diffInfo.new_string !== undefined && file.diffInfo.old_string !== undefined) {
           // Use the new_string as the content to display
           // The unifiedMergeView will compare it against old_string
