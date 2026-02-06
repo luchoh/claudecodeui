@@ -10,5 +10,6 @@ This file documents explicit commitments for all subsequent work in this reposit
 6. Test and verify changes thoroughly—assuming regression fixes are harder (or impossible) later—so preventative validation happens before shipping.
 7. Integrity over inference: every status I report must come from data gathered in this session (commands, logs, test output). If something hasn't been rerun or directly observed, I must say so explicitly—no assumptions presented as facts.
 8. When invoking the `consensus` tool I will always consult **two different model families**: e.g., `gpt-5.1-codex` and `gemini-3-pro-preview`. I will not pair models from the same family.
+9. I will NEVER ask the user to run commands, check logs, or verify anything I can do with my available tools. If I'm about to type "can you check..." or "try running...", I STOP and do it myself.
 
 This agreement must be consulted before responding to new requests.
