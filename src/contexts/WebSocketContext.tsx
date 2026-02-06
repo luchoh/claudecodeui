@@ -1,10 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from './AuthContext';
 import { IS_PLATFORM } from '../constants/config';
+import { refreshAccessToken, shouldRefreshToken } from '../utils/tokenRefresh';
 
 type WebSocketContextType = {
   ws: WebSocket | null;
-  sendMessage: (message: any) => void;
+  sendMessage: (message: any) => boolean;
   latestMessage: any | null;
   isConnected: boolean;
 };
@@ -57,14 +58,17 @@ const fetchTicket = async (token: string): Promise<string | null> => {
 
 const useWebSocketProviderState = (): WebSocketContextType => {
   const wsRef = useRef<WebSocket | null>(null);
-  const unmountedRef = useRef(false); // Track if component is unmounted
   const [latestMessage, setLatestMessage] = useState<any>(null);
   const [isConnected, setIsConnected] = useState(false);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const reconnectAttemptsRef = useRef(0);
+  const MAX_RECONNECT_ATTEMPTS = 5;
+  const connectIdRef = useRef(0); // Monotonic ID to cancel stale connect() calls
   const { token } = useAuth();
 
-  const connect = useCallback(async () => {
-    if (unmountedRef.current) return; // Prevent connection if unmounted
+  const connect = useCallback(async (myConnectId: number) => {
+    // If a newer connect() was initiated, this one is stale — abort
+    if (myConnectId !== connectIdRef.current) return;
 
     try {
       let wsUrl: string | null = null;
@@ -79,13 +83,35 @@ const useWebSocketProviderState = (): WebSocketContextType => {
           return;
         }
 
-        const ticket = await fetchTicket(token);
+        // If token is near expiry or expired, try refreshing first
+        let currentToken: string = token;
+        if (shouldRefreshToken()) {
+          try {
+            const newToken = await refreshAccessToken();
+            if (newToken) {
+              currentToken = newToken;
+            }
+          } catch {
+            // Fall through — try with existing token anyway
+          }
+        }
+
+        if (myConnectId !== connectIdRef.current) return; // Stale after async
+
+        const ticket = await fetchTicket(currentToken);
         if (!ticket) {
-          console.warn('[WebSocket] Failed to get WebSocket ticket');
+          console.warn('[WebSocket] Failed to get ticket, scheduling retry');
+          if (reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
+            reconnectAttemptsRef.current++;
+            const delay = Math.min(3000 * Math.pow(2, reconnectAttemptsRef.current - 1), 30000);
+            reconnectTimeoutRef.current = setTimeout(() => {
+              if (myConnectId === connectIdRef.current) connect(myConnectId);
+            }, delay);
+          }
           return;
         }
 
-        if (unmountedRef.current) return; // Check again after async operation
+        if (myConnectId !== connectIdRef.current) return; // Stale after async
         wsUrl = buildWebSocketUrl(ticket);
       }
 
@@ -94,6 +120,11 @@ const useWebSocketProviderState = (): WebSocketContextType => {
       const websocket = new WebSocket(wsUrl);
 
       websocket.onopen = () => {
+        if (myConnectId !== connectIdRef.current) {
+          websocket.close(); // Stale — close the orphaned socket
+          return;
+        }
+        reconnectAttemptsRef.current = 0; // Reset on successful connection
         setIsConnected(true);
         wsRef.current = websocket;
       };
@@ -108,13 +139,13 @@ const useWebSocketProviderState = (): WebSocketContextType => {
       };
 
       websocket.onclose = () => {
+        if (myConnectId !== connectIdRef.current) return; // Stale — don't reconnect
         setIsConnected(false);
         wsRef.current = null;
 
         // Attempt to reconnect after 3 seconds
         reconnectTimeoutRef.current = setTimeout(() => {
-          if (unmountedRef.current) return; // Prevent reconnection if unmounted
-          connect();
+          if (myConnectId === connectIdRef.current) connect(myConnectId);
         }, 3000);
       };
 
@@ -128,27 +159,36 @@ const useWebSocketProviderState = (): WebSocketContextType => {
   }, [token]); // everytime token changes, we reconnect
 
   useEffect(() => {
-    connect();
+    const myId = ++connectIdRef.current; // Invalidate any previous connect()
+    connect(myId);
 
     return () => {
-      unmountedRef.current = true;
+      connectIdRef.current++; // Invalidate this connect() on cleanup
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
       }
       if (wsRef.current) {
         wsRef.current.close();
+        wsRef.current = null;
       }
     };
   }, [token]); // everytime token changes, we reconnect
 
-  const sendMessage = useCallback((message: any) => {
+  const sendMessage = useCallback((message: any): boolean => {
     const socket = wsRef.current;
-    if (socket && isConnected) {
-      socket.send(JSON.stringify(message));
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      try {
+        socket.send(JSON.stringify(message));
+        return true;
+      } catch (error) {
+        console.error('[WebSocket] Send failed:', error);
+        return false;
+      }
     } else {
-      console.warn('WebSocket not connected');
+      console.warn('[WebSocket] Not connected, message dropped');
+      return false;
     }
-  }, [isConnected]);
+  }, []);
 
   const value: WebSocketContextType = useMemo(() =>
   ({

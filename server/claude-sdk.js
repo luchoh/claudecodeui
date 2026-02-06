@@ -571,54 +571,98 @@ async function queryClaudeSDK(command, options = {}, ws) {
       addSession(capturedSessionId, queryInstance, tempImagePaths, tempDir);
     }
 
-    // Process streaming messages
+    // Process streaming messages with timeout protection.
+    // If the SDK hangs (e.g. missing API key, network issue), we detect it
+    // and send an error to the UI instead of spinning forever.
+    const SDK_FIRST_MESSAGE_TIMEOUT_MS = parseInt(process.env.SDK_FIRST_MESSAGE_TIMEOUT_MS, 10) || 30000;
+
     console.log('Starting async generator loop for session:', capturedSessionId || 'NEW');
-    for await (const message of queryInstance) {
-      // Capture session ID from first message
-      if (message.session_id && !capturedSessionId) {
+    let receivedFirstMessage = false;
+    let timeoutHandle = null;
 
-        capturedSessionId = message.session_id;
-        addSession(capturedSessionId, queryInstance, tempImagePaths, tempDir);
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutHandle = setTimeout(() => {
+        reject(new Error(
+          'Claude SDK did not respond within ' + (SDK_FIRST_MESSAGE_TIMEOUT_MS / 1000) +
+          's. This usually means the API key is missing or invalid. ' +
+          'Check that ANTHROPIC_API_KEY is set or that Claude Code CLI is authenticated.'
+        ));
+      }, SDK_FIRST_MESSAGE_TIMEOUT_MS);
+    });
 
-        // Set session ID on writer
-        if (ws.setSessionId && typeof ws.setSessionId === 'function') {
-          ws.setSessionId(capturedSessionId);
-        }
+    // Race the first message against the timeout
+    const iterator = queryInstance[Symbol.asyncIterator]();
 
-        // Send session-created event only once for new sessions
-        if (!sessionId && !sessionCreatedSent) {
-          sessionCreatedSent = true;
-          ws.send({
-            type: 'session-created',
-            sessionId: capturedSessionId
-          });
+    const nextWithTimeout = async () => {
+      if (!receivedFirstMessage) {
+        // Race the first iteration against the timeout
+        const result = await Promise.race([
+          iterator.next(),
+          timeoutPromise
+        ]);
+        receivedFirstMessage = true;
+        clearTimeout(timeoutHandle);
+        timeoutHandle = null;
+        return result;
+      }
+      return iterator.next();
+    };
+
+    try {
+      let iterResult = await nextWithTimeout();
+      while (!iterResult.done) {
+        const message = iterResult.value;
+
+        // Capture session ID from first message
+        if (message.session_id && !capturedSessionId) {
+
+          capturedSessionId = message.session_id;
+          addSession(capturedSessionId, queryInstance, tempImagePaths, tempDir);
+
+          // Set session ID on writer
+          if (ws.setSessionId && typeof ws.setSessionId === 'function') {
+            ws.setSessionId(capturedSessionId);
+          }
+
+          // Send session-created event only once for new sessions
+          if (!sessionId && !sessionCreatedSent) {
+            sessionCreatedSent = true;
+            ws.send({
+              type: 'session-created',
+              sessionId: capturedSessionId
+            });
+          } else {
+            console.log('Not sending session-created. sessionId:', sessionId, 'sessionCreatedSent:', sessionCreatedSent);
+          }
         } else {
-          console.log('Not sending session-created. sessionId:', sessionId, 'sessionCreatedSent:', sessionCreatedSent);
+          console.log('No session_id in message or already captured. message.session_id:', message.session_id, 'capturedSessionId:', capturedSessionId);
         }
-      } else {
-        console.log('No session_id in message or already captured. message.session_id:', message.session_id, 'capturedSessionId:', capturedSessionId);
-      }
 
-      // Transform and send message to WebSocket
-      const transformedMessage = transformMessage(message);
-      ws.send({
-        type: 'claude-response',
-        data: transformedMessage,
-        sessionId: capturedSessionId || sessionId || null
-      });
+        // Transform and send message to WebSocket
+        const transformedMessage = transformMessage(message);
+        ws.send({
+          type: 'claude-response',
+          data: transformedMessage,
+          sessionId: capturedSessionId || sessionId || null
+        });
 
-      // Extract and send token budget updates from result messages
-      if (message.type === 'result') {
-        const tokenBudget = extractTokenBudget(message);
-        if (tokenBudget) {
-          console.log('Token budget from modelUsage:', tokenBudget);
-          ws.send({
-            type: 'token-budget',
-            data: tokenBudget,
-            sessionId: capturedSessionId || sessionId || null
-          });
+        // Extract and send token budget updates from result messages
+        if (message.type === 'result') {
+          const tokenBudget = extractTokenBudget(message);
+          if (tokenBudget) {
+            console.log('Token budget from modelUsage:', tokenBudget);
+            ws.send({
+              type: 'token-budget',
+              data: tokenBudget,
+              sessionId: capturedSessionId || sessionId || null
+            });
+          }
         }
+
+        iterResult = await nextWithTimeout();
       }
+    } finally {
+      if (timeoutHandle) clearTimeout(timeoutHandle);
     }
 
     // Clean up session on completion

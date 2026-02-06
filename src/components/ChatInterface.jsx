@@ -3664,6 +3664,9 @@ function ChatInterface({ selectedProject, selectedSession, ws, sendMessage, late
             content: `Error: ${latestMessage.error}`,
             timestamp: new Date()
           }]);
+          setIsLoading(false);
+          setCanAbortSession(false);
+          setClaudeStatus(null);
           break;
           
         case 'cursor-system':
@@ -4540,54 +4543,76 @@ function ChatInterface({ selectedProject, selectedSession, ws, sendMessage, late
     const toolsSettings = getToolsSettings();
 
     // Send command based on provider
+    let sent = false;
     if (provider === 'cursor') {
       // Send Cursor command (always use cursor-command; include resume/sessionId when replying)
-      sendMessage({
+      const msg = {
         type: 'cursor-command',
         command: messageContent,
-        sessionId: effectiveSessionId,
         options: {
           // Prefer fullPath (actual cwd for project), fallback to path
           cwd: selectedProject.fullPath || selectedProject.path,
           projectPath: selectedProject.fullPath || selectedProject.path,
-          sessionId: effectiveSessionId,
           resume: !!effectiveSessionId,
           model: cursorModel,
           skipPermissions: toolsSettings?.skipPermissions || false,
           toolsSettings: toolsSettings
         }
-      });
+      };
+      if (effectiveSessionId) {
+        msg.sessionId = effectiveSessionId;
+        msg.options.sessionId = effectiveSessionId;
+      }
+      sent = sendMessage(msg);
     } else if (provider === 'codex') {
       // Send Codex command
-      sendMessage({
+      const msg = {
         type: 'codex-command',
         command: messageContent,
-        sessionId: effectiveSessionId,
         options: {
           cwd: selectedProject.fullPath || selectedProject.path,
           projectPath: selectedProject.fullPath || selectedProject.path,
-          sessionId: effectiveSessionId,
           resume: !!effectiveSessionId,
           model: codexModel,
           permissionMode: permissionMode === 'plan' ? 'default' : permissionMode
         }
-      });
+      };
+      if (effectiveSessionId) {
+        msg.sessionId = effectiveSessionId;
+        msg.options.sessionId = effectiveSessionId;
+      }
+      sent = sendMessage(msg);
     } else {
-      // Send Claude command (existing code)
-      sendMessage({
+      // Send Claude command
+      const msg = {
         type: 'claude-command',
         command: messageContent,
         options: {
           projectPath: selectedProject.path,
           cwd: selectedProject.fullPath,
-          sessionId: currentSessionId,
           resume: !!currentSessionId,
           toolsSettings: toolsSettings,
           permissionMode: permissionMode,
           model: claudeModel,
-          images: uploadedImages // Pass images to backend
+          images: uploadedImages
         }
-      });
+      };
+      if (currentSessionId) {
+        msg.options.sessionId = currentSessionId;
+      }
+      sent = sendMessage(msg);
+    }
+
+    if (!sent) {
+      setIsLoading(false);
+      setCanAbortSession(false);
+      setClaudeStatus(null);
+      setChatMessages(prev => [...prev, {
+        type: 'error',
+        content: 'Message could not be sent — connection lost. Please try again or refresh the page.',
+        timestamp: new Date()
+      }]);
+      return;
     }
 
     setInput('');
