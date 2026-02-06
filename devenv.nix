@@ -6,13 +6,12 @@
   # Remove once upstream is fixed
   disabledModules = [ "${inputs.devenv}/integrations/secretspec.nix" ];
 
-  dotenv.enable = true;
-
   packages = with pkgs; [
     nodejs_20
     jq
     git
     openssl  # For generating JWT_SECRET: openssl rand -base64 32
+    mitmproxy
   ];
 
   languages.javascript = {
@@ -95,6 +94,32 @@
       set -a
       source .env.dev
       set +a
+
+      if [ "''${MITM_PROXY_ENABLE:-0}" = "1" ]; then
+        proxy_url="''${MITM_PROXY_URL:-http://127.0.0.1:''${MITM_PROXY_PORT:-8082}}"
+        export HTTP_PROXY="$proxy_url"
+        export HTTPS_PROXY="$proxy_url"
+        export NO_PROXY="127.0.0.1,localhost''${NO_PROXY:+,$NO_PROXY}"
+        if [ -n "''${MITM_PROXY_CA_CERT:-}" ] && [ -f "''${MITM_PROXY_CA_CERT}" ]; then
+          export NODE_EXTRA_CA_CERTS="''${MITM_PROXY_CA_CERT}"
+        elif [ -f "$DEVENV_ROOT/.devenv/mitmproxy/mitmproxy-ca-cert.pem" ]; then
+          export NODE_EXTRA_CA_CERTS="$DEVENV_ROOT/.devenv/mitmproxy/mitmproxy-ca-cert.pem"
+        fi
+        echo "MITM proxy enabled for client: $proxy_url"
+      fi
+
+      if [ "''${MITM_PROXY_ENABLE:-0}" = "1" ]; then
+        proxy_url="''${MITM_PROXY_URL:-http://127.0.0.1:''${MITM_PROXY_PORT:-8082}}"
+        export HTTP_PROXY="$proxy_url"
+        export HTTPS_PROXY="$proxy_url"
+        export NO_PROXY="127.0.0.1,localhost''${NO_PROXY:+,$NO_PROXY}"
+        if [ -n "''${MITM_PROXY_CA_CERT:-}" ] && [ -f "''${MITM_PROXY_CA_CERT}" ]; then
+          export NODE_EXTRA_CA_CERTS="''${MITM_PROXY_CA_CERT}"
+        elif [ -f "$DEVENV_ROOT/.devenv/mitmproxy/mitmproxy-ca-cert.pem" ]; then
+          export NODE_EXTRA_CA_CERTS="$DEVENV_ROOT/.devenv/mitmproxy/mitmproxy-ca-cert.pem"
+        fi
+        echo "MITM proxy enabled for server: $proxy_url"
+      fi
 
       # Validate PORT
       if [ -z "$PORT" ] || ! printf '%s' "$PORT" | grep -Eq '^[0-9]+$'; then
@@ -188,6 +213,8 @@
 
       echo "Starting Vite dev server on VITE_PORT=$VITE_PORT"
 
+      export CHOKIDAR_USEPOLLING=0
+      export CHOKIDAR_PRINT_FSEVENTS_REQUIRE_ERROR=1
       exec npm run client
     ) &
     client_pid=$!
@@ -198,6 +225,27 @@
       exit 0
     fi
     exit "$status"
+  '';
+
+  processes.mitmproxy.exec = ''
+    set -euo pipefail
+    cd "$DEVENV_ROOT"
+
+    conf_dir="$DEVENV_ROOT/.devenv/mitmproxy"
+    flow_file="/tmp/claudecodeui-security-audit/mitmproxy-live.flow"
+    log_file="/tmp/claudecodeui-security-audit/mitmproxy-live.log"
+    port="''${MITM_PROXY_PORT:-8082}"
+
+    mkdir -p "$conf_dir" /tmp/claudecodeui-security-audit
+
+    echo "Starting mitmdump on 127.0.0.1:$port"
+    echo "Flows: $flow_file"
+    echo "Log: $log_file"
+    echo "CA cert: $conf_dir/mitmproxy-ca-cert.pem"
+
+    exec mitmdump --listen-host 127.0.0.1 --listen-port "$port" \
+      --set confdir="$conf_dir" \
+      -w "$flow_file" > "$log_file" 2>&1
   '';
 
   enterShell = ''
@@ -243,12 +291,26 @@
     if [ ! -d node_modules ]; then
       echo "📦 Installing dependencies..."
       npm install
+    else
+      # Check if native modules need rebuild (Node version mismatch)
+      current_node=$(node --version | cut -d. -f1 | tr -d 'v')
+      if [ -f node_modules/.node_version ]; then
+        built_node=$(cat node_modules/.node_version)
+        if [ "$current_node" != "$built_node" ]; then
+          echo "🔄 Node version changed ($built_node -> $current_node), rebuilding native modules..."
+          npm rebuild better-sqlite3 2>/dev/null || true
+          echo "$current_node" > node_modules/.node_version
+        fi
+      else
+        echo "$current_node" > node_modules/.node_version
+      fi
     fi
 
     echo "Commands:"
     echo "  devenv up                # run server + client together"
     echo "  devenv up server         # run Express backend only (port ''${PORT:-3001})"
     echo "  devenv up client         # run Vite dev server only (port ''${VITE_PORT:-5173})"
+    echo "  devenv up mitmproxy      # run mitmdump on 127.0.0.1:''${MITM_PROXY_PORT:-8082}"
     echo "  npm run build            # build for production"
     echo "  npm run typecheck        # run TypeScript type checking"
     echo ""

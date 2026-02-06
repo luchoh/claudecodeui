@@ -1,9 +1,7 @@
 import { Zap } from 'lucide-react';
 import { useTasksSettings } from '../contexts/TasksSettingsContext';
-import { useTranslation } from 'react-i18next';
 
 function TasksSettings() {
-  const { t } = useTranslation('settings');
   const {
     tasksEnabled,
     setTasksEnabled,
@@ -18,7 +16,7 @@ function TasksSettings() {
         <div className="bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
           <div className="flex items-center gap-3">
             <div className="animate-spin w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full"></div>
-            <span className="text-sm text-muted-foreground">{t('tasks.checking')}</span>
+            <span className="text-sm text-muted-foreground">{"Checking TaskMaster installation..."}</span>
           </div>
         </div>
       ) : (
@@ -34,13 +32,13 @@ function TasksSettings() {
                 </div>
                 <div className="flex-1">
                   <div className="font-medium text-orange-900 dark:text-orange-100 mb-2">
-                    {t('tasks.notInstalled.title')}
+                    {"TaskMaster AI CLI Not Installed"}
                   </div>
                   <div className="text-sm text-orange-800 dark:text-orange-200 space-y-3">
-                    <p>{t('tasks.notInstalled.description')}</p>
+                    <p>{"TaskMaster CLI is required to use task management features. Install it to get started:"}</p>
 
                     <div className="bg-orange-100 dark:bg-orange-900/50 rounded-lg p-3 font-mono text-sm">
-                      <code>{t('tasks.notInstalled.installCommand')}</code>
+                      <code>{"npm install -g task-master-ai"}</code>
                     </div>
 
                     <div>
@@ -53,7 +51,7 @@ function TasksSettings() {
                         <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
                           <path fillRule="evenodd" d="M10 0C4.477 0 0 4.484 0 10.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0110 4.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.203 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.942.359.31.678.921.678 1.856 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0020 10.017C20 4.484 15.522 0 10 0z" clipRule="evenodd" />
                         </svg>
-                        {t('tasks.notInstalled.viewOnGitHub')}
+                        {"View on GitHub"}
                         <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                         </svg>
@@ -61,11 +59,11 @@ function TasksSettings() {
                     </div>
 
                     <div className="space-y-2">
-                      <p className="font-medium">{t('tasks.notInstalled.afterInstallation')}</p>
+                      <p className="font-medium">{"After installation:"}</p>
                       <ol className="list-decimal list-inside space-y-1 text-xs">
-                        <li>{t('tasks.notInstalled.steps.restart')}</li>
-                        <li>{t('tasks.notInstalled.steps.autoAvailable')}</li>
-                        <li>{t('tasks.notInstalled.steps.initCommand')}</li>
+                        <li>{"Restart this application"}</li>
+                        <li>{"TaskMaster features will automatically become available"}</li>
+                        <li>{"Use task-master init in your project directory"}</li>
                       </ol>
                     </div>
                   </div>
@@ -81,10 +79,10 @@ function TasksSettings() {
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="font-medium text-foreground">
-                      {t('tasks.settings.enableLabel')}
+                      {"Enable TaskMaster Integration"}
                     </div>
                     <div className="text-sm text-muted-foreground mt-1">
-                      {t('tasks.settings.enableDescription')}
+                      {"Show TaskMaster tasks, banners, and sidebar indicators across the interface"}
                     </div>
                   </div>
                   <label className="relative inline-flex items-center cursor-pointer">

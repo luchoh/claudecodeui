@@ -12,7 +12,6 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { useTranslation } from 'react-i18next';
 import ChatInterface from './ChatInterface';
 import FileTree from './FileTree';
 import CodeEditor from './CodeEditor';
@@ -59,7 +58,6 @@ function MainContent({
   sendByCtrlEnter,        // Send by Ctrl+Enter mode for East Asian language input
   externalMessageUpdate   // Trigger for external CLI updates to current session
 }) {
-  const { t } = useTranslation();
   const [editingFile, setEditingFile] = useState(null);
   const [selectedTask, setSelectedTask] = useState(null);
   const [showTaskDetail, setShowTaskDetail] = useState(false);
@@ -240,8 +238,8 @@ function MainContent({
                 }} 
               />
             </div>
-            <h2 className="text-xl font-semibold mb-2">{t('mainContent.loading')}</h2>
-            <p>{t('mainContent.settingUpWorkspace')}</p>
+            <h2 className="text-xl font-semibold mb-2">{"Loading Claude Code UI"}</h2>
+            <p>{"Setting up your workspace..."}</p>
           </div>
         </div>
       </div>
@@ -273,13 +271,13 @@ function MainContent({
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-5l-2-2H5a2 2 0 00-2 2z" />
               </svg>
             </div>
-            <h2 className="text-2xl font-semibold mb-3 text-gray-900 dark:text-white">{t('mainContent.chooseProject')}</h2>
+            <h2 className="text-2xl font-semibold mb-3 text-gray-900 dark:text-white">{"Choose Your Project"}</h2>
             <p className="text-gray-600 dark:text-gray-300 mb-6 leading-relaxed">
-              {t('mainContent.selectProjectDescription')}
+              {"Select a project from the sidebar to start coding with Claude. Each project contains your chat sessions and file history."}
             </p>
             <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4 border border-blue-200 dark:border-blue-800">
               <p className="text-sm text-blue-700 dark:text-blue-300">
-                💡 <strong>{t('mainContent.tip')}:</strong> {isMobile ? t('mainContent.createProjectMobile') : t('mainContent.createProjectDesktop')}
+                💡 <strong>{"Tip"}:</strong> {isMobile ? "Tap the menu button above to access projects" : "Create a new project by clicking the folder icon in the sidebar"}
               </p>
             </div>
           </div>
@@ -333,7 +331,7 @@ function MainContent({
                 ) : activeTab === 'chat' && !selectedSession ? (
                   <div className="min-w-0">
                     <h2 className="text-sm sm:text-base font-semibold text-gray-900 dark:text-white">
-                      {t('mainContent.newSession')}
+                      {"New Session"}
                     </h2>
                     <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
                       {selectedProject.displayName}
@@ -342,7 +340,7 @@ function MainContent({
                 ) : (
                   <div className="min-w-0">
                     <h2 className="text-sm sm:text-base font-semibold text-gray-900 dark:text-white">
-                      {activeTab === 'files' ? t('mainContent.projectFiles') :
+                      {activeTab === 'files' ? 'Project Files' :
                        (activeTab === 'tasks' && shouldShowTasksTab) ? 'TaskMaster' :
                        'Project'}
                     </h2>
@@ -358,7 +356,7 @@ function MainContent({
           {/* Modern Tab Navigation - Right Side */}
           <div className="flex-shrink-0 hidden sm:block">
             <div className="relative flex bg-gray-100 dark:bg-gray-800 rounded-lg p-1">
-              <Tooltip content={t('tabs.chat')} position="bottom">
+              <Tooltip content="Chat" position="bottom">
                 <button
                   onClick={() => setActiveTab('chat')}
                   className={`relative px-2 sm:px-3 py-1.5 text-xs sm:text-sm font-medium rounded-md ${
@@ -371,11 +369,11 @@ function MainContent({
                     <svg className="w-3 sm:w-3.5 h-3 sm:h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
                     </svg>
-                    <span className="hidden md:hidden lg:inline">{t('tabs.chat')}</span>
+                    <span className="hidden md:hidden lg:inline">Chat</span>
                   </span>
                 </button>
               </Tooltip>
-              <Tooltip content={t('tabs.shell')} position="bottom">
+              <Tooltip content="Shell" position="bottom">
                 <button
                   onClick={() => setActiveTab('shell')}
                   className={`relative px-2 sm:px-3 py-1.5 text-xs sm:text-sm font-medium rounded-md transition-all duration-200 ${
@@ -388,11 +386,11 @@ function MainContent({
                     <svg className="w-3 sm:w-3.5 h-3 sm:h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2z" />
                     </svg>
-                    <span className="hidden md:hidden lg:inline">{t('tabs.shell')}</span>
+                    <span className="hidden md:hidden lg:inline">Shell</span>
                   </span>
                 </button>
               </Tooltip>
-              <Tooltip content={t('tabs.files')} position="bottom">
+              <Tooltip content="Files" position="bottom">
                 <button
                   onClick={() => setActiveTab('files')}
                   className={`relative px-2 sm:px-3 py-1.5 text-xs sm:text-sm font-medium rounded-md transition-all duration-200 ${
@@ -405,13 +403,13 @@ function MainContent({
                     <svg className="w-3 sm:w-3.5 h-3 sm:h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-5l-2-2H5a2 2 0 00-2 2z" />
                     </svg>
-                    <span className="hidden md:hidden lg:inline">{t('tabs.files')}</span>
+                    <span className="hidden md:hidden lg:inline">Files</span>
                   </span>
                 </button>
               </Tooltip>
 {/* SEC-007: Git tab removed - git features removed per user mandate */}
               {shouldShowTasksTab && (
-                <Tooltip content={t('tabs.tasks')} position="bottom">
+                <Tooltip content="Tasks" position="bottom">
                   <button
                     onClick={() => setActiveTab('tasks')}
                     className={`relative px-2 sm:px-3 py-1.5 text-xs sm:text-sm font-medium rounded-md transition-all duration-200 ${
@@ -424,7 +422,7 @@ function MainContent({
                       <svg className="w-3 sm:w-3.5 h-3 sm:h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
                       </svg>
-                      <span className="hidden md:hidden lg:inline">{t('tabs.tasks')}</span>
+                      <span className="hidden md:hidden lg:inline">Tasks</span>
                     </span>
                   </button>
                 </Tooltip>

@@ -66,6 +66,29 @@ import sqlite3 from 'sqlite3';
 import { open } from 'sqlite';
 import os from 'os';
 
+const TIMING_ENABLED = process.env.PROJECTS_TIMING === 'true';
+const TIMING_LOG_PATH = process.env.PROJECTS_TIMING_LOG_PATH || '/tmp/claudecodeui-projects-timing.log';
+const nowMs = () => Number(process.hrtime.bigint()) / 1e6;
+const appendTimingLog = (line) => {
+    try {
+        fsSync.appendFileSync(TIMING_LOG_PATH, `${line}\n`);
+    } catch (error) {
+        // Ignore logging failures
+    }
+};
+const logTiming = (payload) => {
+    if (!TIMING_ENABLED) return;
+    try {
+        const line = `[projects-timing] ${JSON.stringify(payload)}`;
+        console.log(line);
+        appendTimingLog(line);
+    } catch (error) {
+        const fallback = '[projects-timing] {"error":"failed to serialize timing payload"}';
+        console.log(fallback);
+        appendTimingLog(fallback);
+    }
+};
+
 // Import TaskMaster detection functions
 async function detectTaskMasterFolder(projectPath) {
     try {
@@ -262,9 +285,20 @@ async function generateDisplayName(projectName, actualProjectDir = null) {
 
 // Extract the actual project directory from JSONL sessions (with caching)
 async function extractProjectDirectory(projectName) {
+  const timingStart = nowMs();
+  let jsonlFilesScanned = 0;
+  let jsonlLinesScanned = 0;
+  let usedFallback = false;
+
   // Check cache first
   if (projectDirectoryCache.has(projectName)) {
-    return projectDirectoryCache.get(projectName);
+    const cachedPath = projectDirectoryCache.get(projectName);
+    logTiming({
+      event: 'extractProjectDirectory_cache_hit',
+      project: projectName,
+      ms: Math.round(nowMs() - timingStart)
+    });
+    return cachedPath;
   }
 
   // Check project config for originalPath (manually added projects via UI or platform)
@@ -273,6 +307,11 @@ async function extractProjectDirectory(projectName) {
   if (config[projectName]?.originalPath) {
     const originalPath = config[projectName].originalPath;
     projectDirectoryCache.set(projectName, originalPath);
+    logTiming({
+      event: 'extractProjectDirectory_config',
+      project: projectName,
+      ms: Math.round(nowMs() - timingStart)
+    });
     return originalPath;
   }
 
@@ -288,46 +327,51 @@ async function extractProjectDirectory(projectName) {
     
     const files = await fs.readdir(projectDir);
     const jsonlFiles = files.filter(file => file.endsWith('.jsonl'));
+    jsonlFilesScanned = jsonlFiles.length;
     
     if (jsonlFiles.length === 0) {
       // Fall back to decoded project name if no sessions
+      usedFallback = true;
       extractedPath = projectName.replace(/-/g, '/');
     } else {
-      // Process all JSONL files to collect cwd values
-      for (const file of jsonlFiles) {
+      // Extract cwd from first entry of most recent JSONL file (cwd is in every entry)
+      // Sort by filename descending to get the most recent session first
+      const sortedFiles = [...jsonlFiles].sort().reverse();
+      for (const file of sortedFiles) {
         const jsonlFile = path.join(projectDir, file);
-        const fileStream = fsSync.createReadStream(jsonlFile);
+        const fileStream = fsSync.createReadStream(jsonlFile, { end: 4096 }); // Read at most 4KB
         const rl = readline.createInterface({
           input: fileStream,
           crlfDelay: Infinity
         });
-        
+
+        let found = false;
         for await (const line of rl) {
           if (line.trim()) {
             try {
+              jsonlLinesScanned += 1;
               const entry = JSON.parse(line);
-              
+
               if (entry.cwd) {
-                // Count occurrences of each cwd
-                cwdCounts.set(entry.cwd, (cwdCounts.get(entry.cwd) || 0) + 1);
-                
-                // Track the most recent cwd
-                const timestamp = new Date(entry.timestamp || 0).getTime();
-                if (timestamp > latestTimestamp) {
-                  latestTimestamp = timestamp;
-                  latestCwd = entry.cwd;
-                }
+                cwdCounts.set(entry.cwd, 1);
+                latestCwd = entry.cwd;
+                found = true;
+                rl.close();
+                fileStream.destroy();
+                break;
               }
             } catch (parseError) {
               // Skip malformed lines
             }
           }
         }
+        if (found) break; // Got cwd from most recent file, no need to check others
       }
       
       // Determine the best cwd to use
       if (cwdCounts.size === 0) {
         // No cwd found, fall back to decoded project name
+        usedFallback = true;
         extractedPath = projectName.replace(/-/g, '/');
       } else if (cwdCounts.size === 1) {
         // Only one cwd, use it
@@ -360,6 +404,16 @@ async function extractProjectDirectory(projectName) {
     // Cache the result
     projectDirectoryCache.set(projectName, extractedPath);
     
+    logTiming({
+      event: 'extractProjectDirectory',
+      project: projectName,
+      ms: Math.round(nowMs() - timingStart),
+      jsonlFiles: jsonlFilesScanned,
+      jsonlLines: jsonlLinesScanned,
+      cwdVariants: cwdCounts.size,
+      usedFallback
+    });
+
     return extractedPath;
     
   } catch (error) {
@@ -375,11 +429,23 @@ async function extractProjectDirectory(projectName) {
     // Cache the fallback result too
     projectDirectoryCache.set(projectName, extractedPath);
     
+    logTiming({
+      event: 'extractProjectDirectory_error',
+      project: projectName,
+      ms: Math.round(nowMs() - timingStart),
+      jsonlFiles: jsonlFilesScanned,
+      jsonlLines: jsonlLinesScanned,
+      cwdVariants: cwdCounts.size,
+      usedFallback,
+      error: error.code || error.message
+    });
+
     return extractedPath;
   }
 }
 
 async function getProjects(progressCallback = null) {
+  const timingStart = nowMs();
   const claudeDir = path.join(os.homedir(), '.claude', 'projects');
   const config = await loadProjectConfig();
   const projects = [];
@@ -387,6 +453,7 @@ async function getProjects(progressCallback = null) {
   let totalProjects = 0;
   let processedProjects = 0;
   let directories = [];
+  logTiming({ event: 'getProjects_start' });
 
   try {
     // Check if the .claude/projects directory exists
@@ -406,7 +473,16 @@ async function getProjects(progressCallback = null) {
 
     totalProjects = directories.length + manualProjectsCount;
 
+    logTiming({
+      event: 'getProjects_directory_scan',
+      ms: Math.round(nowMs() - timingStart),
+      directories: directories.length,
+      manualProjects: manualProjectsCount,
+      totalProjects
+    });
+
     for (const entry of directories) {
+        const projectStart = nowMs();
         processedProjects++;
 
         // Emit progress
@@ -422,11 +498,23 @@ async function getProjects(progressCallback = null) {
         const projectPath = path.join(claudeDir, entry.name);
         
         // Extract actual project directory from JSONL sessions
+        const extractStart = nowMs();
         const actualProjectDir = await extractProjectDirectory(entry.name);
+        logTiming({
+          event: 'getProjects_extractProjectDirectory',
+          project: entry.name,
+          ms: Math.round(nowMs() - extractStart)
+        });
         
         // Get display name from config or generate one
         const customName = config[entry.name]?.displayName;
+        const displayStart = nowMs();
         const autoDisplayName = await generateDisplayName(entry.name, actualProjectDir);
+        logTiming({
+          event: 'getProjects_generateDisplayName',
+          project: entry.name,
+          ms: Math.round(nowMs() - displayStart)
+        });
         const fullPath = actualProjectDir;
         
         const project = {
@@ -440,34 +528,72 @@ async function getProjects(progressCallback = null) {
         
         // Try to get sessions for this project (just first 5 for performance)
         try {
+          const sessionsStart = nowMs();
           const sessionResult = await getSessions(entry.name, 5, 0);
           project.sessions = sessionResult.sessions || [];
           project.sessionMeta = {
             hasMore: sessionResult.hasMore,
             total: sessionResult.total
           };
+          logTiming({
+            event: 'getProjects_getSessions',
+            project: entry.name,
+            ms: Math.round(nowMs() - sessionsStart),
+            sessions: project.sessions.length,
+            total: sessionResult.total
+          });
         } catch (e) {
           console.warn(`Could not load sessions for project ${entry.name}:`, e.message);
+          logTiming({
+            event: 'getProjects_getSessions_error',
+            project: entry.name,
+            error: e.message
+          });
         }
         
         // Also fetch Cursor sessions for this project
         try {
+          const cursorStart = nowMs();
           project.cursorSessions = await getCursorSessions(actualProjectDir);
+          logTiming({
+            event: 'getProjects_getCursorSessions',
+            project: entry.name,
+            ms: Math.round(nowMs() - cursorStart),
+            sessions: project.cursorSessions.length
+          });
         } catch (e) {
           console.warn(`Could not load Cursor sessions for project ${entry.name}:`, e.message);
           project.cursorSessions = [];
+          logTiming({
+            event: 'getProjects_getCursorSessions_error',
+            project: entry.name,
+            error: e.message
+          });
         }
 
         // Also fetch Codex sessions for this project
         try {
+          const codexStart = nowMs();
           project.codexSessions = await getCodexSessions(actualProjectDir);
+          logTiming({
+            event: 'getProjects_getCodexSessions',
+            project: entry.name,
+            ms: Math.round(nowMs() - codexStart),
+            sessions: project.codexSessions.length
+          });
         } catch (e) {
           console.warn(`Could not load Codex sessions for project ${entry.name}:`, e.message);
           project.codexSessions = [];
+          logTiming({
+            event: 'getProjects_getCodexSessions_error',
+            project: entry.name,
+            error: e.message
+          });
         }
 
         // Add TaskMaster detection
         try {
+          const taskMasterStart = nowMs();
           const taskMasterResult = await detectTaskMasterFolder(actualProjectDir);
           project.taskmaster = {
             hasTaskmaster: taskMasterResult.hasTaskmaster,
@@ -475,6 +601,13 @@ async function getProjects(progressCallback = null) {
             metadata: taskMasterResult.metadata,
             status: taskMasterResult.hasTaskmaster && taskMasterResult.hasEssentialFiles ? 'configured' : 'not-configured'
           };
+          logTiming({
+            event: 'getProjects_detectTaskMasterFolder',
+            project: entry.name,
+            ms: Math.round(nowMs() - taskMasterStart),
+            hasTaskmaster: taskMasterResult.hasTaskmaster,
+            hasEssentialFiles: taskMasterResult.hasEssentialFiles
+          });
         } catch (e) {
           console.warn(`Could not detect TaskMaster for project ${entry.name}:`, e.message);
           project.taskmaster = {
@@ -483,9 +616,19 @@ async function getProjects(progressCallback = null) {
             metadata: null,
             status: 'error'
           };
+          logTiming({
+            event: 'getProjects_detectTaskMasterFolder_error',
+            project: entry.name,
+            error: e.message
+          });
         }
 
       projects.push(project);
+      logTiming({
+        event: 'getProjects_project_total',
+        project: entry.name,
+        ms: Math.round(nowMs() - projectStart)
+      });
     }
   } catch (error) {
     // If the directory doesn't exist (ENOENT), that's okay - just continue with empty projects
@@ -496,11 +639,18 @@ async function getProjects(progressCallback = null) {
     totalProjects = Object.entries(config)
       .filter(([name, cfg]) => cfg.manuallyAdded)
       .length;
+    logTiming({
+      event: 'getProjects_directory_scan_error',
+      ms: Math.round(nowMs() - timingStart),
+      manualProjects: totalProjects,
+      error: error.code || error.message
+    });
   }
   
   // Add manually configured projects that don't exist as folders yet
   for (const [projectName, projectConfig] of Object.entries(config)) {
     if (!existingProjects.has(projectName) && projectConfig.manuallyAdded) {
+      const manualStart = nowMs();
       processedProjects++;
 
       // Emit progress for manual projects
@@ -518,41 +668,79 @@ async function getProjects(progressCallback = null) {
       
       if (!actualProjectDir) {
         try {
+          const extractStart = nowMs();
           actualProjectDir = await extractProjectDirectory(projectName);
+          logTiming({
+            event: 'getProjects_extractProjectDirectory_manual',
+            project: projectName,
+            ms: Math.round(nowMs() - extractStart)
+          });
         } catch (error) {
           // Fall back to decoded project name
           actualProjectDir = projectName.replace(/-/g, '/');
         }
       }
-      
-              const project = {
-          name: projectName,
-          path: actualProjectDir,
-          displayName: projectConfig.displayName || await generateDisplayName(projectName, actualProjectDir),
-          fullPath: actualProjectDir,
-          isCustomName: !!projectConfig.displayName,
-          isManuallyAdded: true,
-          sessions: [],
-          cursorSessions: [],
-          codexSessions: []
-        };
+      const displayStart = nowMs();
+      const autoDisplayName = await generateDisplayName(projectName, actualProjectDir);
+      logTiming({
+        event: 'getProjects_generateDisplayName_manual',
+        project: projectName,
+        ms: Math.round(nowMs() - displayStart)
+      });
+
+      const project = {
+        name: projectName,
+        path: actualProjectDir,
+        displayName: projectConfig.displayName || autoDisplayName,
+        fullPath: actualProjectDir,
+        isCustomName: !!projectConfig.displayName,
+        isManuallyAdded: true,
+        sessions: [],
+        cursorSessions: [],
+        codexSessions: []
+      };
 
       // Try to fetch Cursor sessions for manual projects too
       try {
+        const cursorStart = nowMs();
         project.cursorSessions = await getCursorSessions(actualProjectDir);
+        logTiming({
+          event: 'getProjects_getCursorSessions_manual',
+          project: projectName,
+          ms: Math.round(nowMs() - cursorStart),
+          sessions: project.cursorSessions.length
+        });
       } catch (e) {
         console.warn(`Could not load Cursor sessions for manual project ${projectName}:`, e.message);
+        logTiming({
+          event: 'getProjects_getCursorSessions_manual_error',
+          project: projectName,
+          error: e.message
+        });
       }
 
       // Try to fetch Codex sessions for manual projects too
       try {
+        const codexStart = nowMs();
         project.codexSessions = await getCodexSessions(actualProjectDir);
+        logTiming({
+          event: 'getProjects_getCodexSessions_manual',
+          project: projectName,
+          ms: Math.round(nowMs() - codexStart),
+          sessions: project.codexSessions.length
+        });
       } catch (e) {
         console.warn(`Could not load Codex sessions for manual project ${projectName}:`, e.message);
+        logTiming({
+          event: 'getProjects_getCodexSessions_manual_error',
+          project: projectName,
+          error: e.message
+        });
       }
 
       // Add TaskMaster detection for manual projects
       try {
+        const taskMasterStart = nowMs();
         const taskMasterResult = await detectTaskMasterFolder(actualProjectDir);
         
         // Determine TaskMaster status
@@ -567,6 +755,13 @@ async function getProjects(progressCallback = null) {
           hasEssentialFiles: taskMasterResult.hasEssentialFiles,
           metadata: taskMasterResult.metadata
         };
+        logTiming({
+          event: 'getProjects_detectTaskMasterFolder_manual',
+          project: projectName,
+          ms: Math.round(nowMs() - taskMasterStart),
+          hasTaskmaster: taskMasterResult.hasTaskmaster,
+          hasEssentialFiles: taskMasterResult.hasEssentialFiles
+        });
       } catch (error) {
         console.warn(`TaskMaster detection failed for manual project ${projectName}:`, error.message);
         project.taskmaster = {
@@ -575,9 +770,19 @@ async function getProjects(progressCallback = null) {
           hasEssentialFiles: false,
           error: error.message
         };
+        logTiming({
+          event: 'getProjects_detectTaskMasterFolder_manual_error',
+          project: projectName,
+          error: error.message
+        });
       }
       
       projects.push(project);
+      logTiming({
+        event: 'getProjects_project_total_manual',
+        project: projectName,
+        ms: Math.round(nowMs() - manualStart)
+      });
     }
   }
 
@@ -589,6 +794,12 @@ async function getProjects(progressCallback = null) {
       total: totalProjects
     });
   }
+
+  logTiming({
+    event: 'getProjects_complete',
+    ms: Math.round(nowMs() - timingStart),
+    totalProjects: projects.length
+  });
 
   return projects;
 }
@@ -1134,6 +1345,11 @@ async function addProjectManually(projectPath, displayName = null) {
 
 // Fetch Cursor sessions for a given project path
 async function getCursorSessions(projectPath) {
+  const timingStart = nowMs();
+  let sessionDirCount = 0;
+  let storeDbCount = 0;
+  let openedDbCount = 0;
+  let errorCount = 0;
   try {
     // Calculate cwdID hash for the project path (Cursor uses MD5 hash)
     const cwdId = crypto.createHash('md5').update(projectPath).digest('hex');
@@ -1149,6 +1365,7 @@ async function getCursorSessions(projectPath) {
     
     // List all session directories
     const sessionDirs = await fs.readdir(cursorChatsPath);
+    sessionDirCount = sessionDirs.length;
     const sessions = [];
     
     for (const sessionId of sessionDirs) {
@@ -1158,6 +1375,7 @@ async function getCursorSessions(projectPath) {
       try {
         // Check if store.db exists
         await fs.access(storeDbPath);
+        storeDbCount += 1;
         
         // Capture store.db mtime as a reliable fallback timestamp
         let dbStatMtimeMs = null;
@@ -1172,6 +1390,7 @@ async function getCursorSessions(projectPath) {
           driver: sqlite3.Database,
           mode: sqlite3.OPEN_READONLY
         });
+        openedDbCount += 1;
         
         // Get metadata from meta table
         const metaRows = await db.all(`
@@ -1227,6 +1446,7 @@ async function getCursorSessions(projectPath) {
         });
         
       } catch (error) {
+        errorCount += 1;
         console.warn(`Could not read Cursor session ${sessionId}:`, error.message);
       }
     }
@@ -1235,10 +1455,31 @@ async function getCursorSessions(projectPath) {
     sessions.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
     
     // Return only the first 5 sessions for performance
-    return sessions.slice(0, 5);
+    const result = sessions.slice(0, 5);
+    logTiming({
+      event: 'getCursorSessions',
+      projectPath,
+      ms: Math.round(nowMs() - timingStart),
+      sessionDirs: sessionDirCount,
+      storeDbs: storeDbCount,
+      openedDbs: openedDbCount,
+      sessions: result.length,
+      errors: errorCount
+    });
+    return result;
     
   } catch (error) {
     console.error('Error fetching Cursor sessions:', error);
+    logTiming({
+      event: 'getCursorSessions_error',
+      projectPath,
+      ms: Math.round(nowMs() - timingStart),
+      sessionDirs: sessionDirCount,
+      storeDbs: storeDbCount,
+      openedDbs: openedDbCount,
+      errors: errorCount + 1,
+      error: error.code || error.message
+    });
     return [];
   }
 }
@@ -1247,6 +1488,11 @@ async function getCursorSessions(projectPath) {
 // Fetch Codex sessions for a given project path
 async function getCodexSessions(projectPath, options = {}) {
   const { limit = 5 } = options;
+  const timingStart = nowMs();
+  let jsonlFilesCount = 0;
+  let parseMsTotal = 0;
+  let parsedFiles = 0;
+  let matchedSessions = 0;
   try {
     const codexSessionsDir = path.join(os.homedir(), '.codex', 'sessions');
     const sessions = [];
@@ -1256,6 +1502,11 @@ async function getCodexSessions(projectPath, options = {}) {
       await fs.access(codexSessionsDir);
     } catch (error) {
       // No Codex sessions directory
+      logTiming({
+        event: 'getCodexSessions_no_dir',
+        projectPath,
+        ms: Math.round(nowMs() - timingStart)
+      });
       return [];
     }
 
@@ -1278,20 +1529,42 @@ async function getCodexSessions(projectPath, options = {}) {
       return files;
     };
 
+    const findStart = nowMs();
     const jsonlFiles = await findJsonlFiles(codexSessionsDir);
+    const findMs = Math.round(nowMs() - findStart);
+    jsonlFilesCount = jsonlFiles.length;
 
-    // Process each file to find sessions matching the project path
+    // Two-pass approach: fast metadata scan to find matching sessions, then full parse only for matches
+    const cleanProjectPath = projectPath.startsWith('\\\\?\\') ? projectPath.slice(4) : projectPath;
+    const matchedFiles = [];
+
+    // Pass 1: Fast metadata-only scan (reads ~8KB per file instead of entire file)
     for (const filePath of jsonlFiles) {
+      const parseStart = nowMs();
+      try {
+        const meta = await parseCodexSessionFileMeta(filePath);
+        parseMsTotal += nowMs() - parseStart;
+        parsedFiles += 1;
+
+        if (meta) {
+          const sessionCwd = meta.cwd || '';
+          const cleanSessionCwd = sessionCwd.startsWith('\\\\?\\') ? sessionCwd.slice(4) : sessionCwd;
+
+          if (sessionCwd === projectPath || cleanSessionCwd === cleanProjectPath || path.relative(cleanSessionCwd, cleanProjectPath) === '') {
+            matchedFiles.push(filePath);
+          }
+        }
+      } catch (error) {
+        parseMsTotal += nowMs() - parseStart;
+        parsedFiles += 1;
+      }
+    }
+
+    // Pass 2: Full parse only for matched files (typically 0-5 files instead of 144)
+    for (const filePath of matchedFiles) {
       try {
         const sessionData = await parseCodexSessionFile(filePath);
-
-        // Check if this session matches the project path
-        // Handle Windows long paths with \\?\ prefix
-        const sessionCwd = sessionData?.cwd || '';
-        const cleanSessionCwd = sessionCwd.startsWith('\\\\?\\') ? sessionCwd.slice(4) : sessionCwd;
-        const cleanProjectPath = projectPath.startsWith('\\\\?\\') ? projectPath.slice(4) : projectPath;
-
-        if (sessionData && (sessionData.cwd === projectPath || cleanSessionCwd === cleanProjectPath || path.relative(cleanSessionCwd, cleanProjectPath) === '')) {
+        if (sessionData) {
           sessions.push({
             id: sessionData.id,
             summary: sessionData.summary || 'Codex Session',
@@ -1312,15 +1585,77 @@ async function getCodexSessions(projectPath, options = {}) {
     sessions.sort((a, b) => new Date(b.lastActivity) - new Date(a.lastActivity));
 
     // Return limited sessions for performance (0 = unlimited for deletion)
-    return limit > 0 ? sessions.slice(0, limit) : sessions;
+    const result = limit > 0 ? sessions.slice(0, limit) : sessions;
+    matchedSessions = sessions.length;
+    logTiming({
+      event: 'getCodexSessions',
+      projectPath,
+      ms: Math.round(nowMs() - timingStart),
+      findMs,
+      jsonlFiles: jsonlFilesCount,
+      parsedFiles,
+      parseMs: Math.round(parseMsTotal),
+      matchedSessions,
+      returnedSessions: result.length,
+      limit
+    });
+    return result;
 
   } catch (error) {
     console.error('Error fetching Codex sessions:', error);
+    logTiming({
+      event: 'getCodexSessions_error',
+      projectPath,
+      ms: Math.round(nowMs() - timingStart),
+      jsonlFiles: jsonlFilesCount,
+      parsedFiles,
+      parseMs: Math.round(parseMsTotal),
+      matchedSessions,
+      error: error.code || error.message
+    });
     return [];
   }
 }
 
-// Parse a Codex session JSONL file to extract metadata
+// Fast metadata-only parse: reads only the first ~20 lines to extract session_meta (cwd, id, model)
+// Used during project scanning to check if a session belongs to a project without reading the entire file
+async function parseCodexSessionFileMeta(filePath) {
+  try {
+    const fileStream = fsSync.createReadStream(filePath, { end: 8192 }); // Read at most 8KB
+    const rl = readline.createInterface({
+      input: fileStream,
+      crlfDelay: Infinity
+    });
+
+    let linesRead = 0;
+    for await (const line of rl) {
+      if (++linesRead > 20) break; // session_meta is always near the top
+      if (line.trim()) {
+        try {
+          const entry = JSON.parse(line);
+          if (entry.type === 'session_meta' && entry.payload) {
+            rl.close();
+            fileStream.destroy();
+            return {
+              id: entry.payload.id,
+              cwd: entry.payload.cwd,
+              model: entry.payload.model || entry.payload.model_provider,
+              timestamp: entry.timestamp,
+              git: entry.payload.git
+            };
+          }
+        } catch (parseError) {
+          // Skip malformed lines
+        }
+      }
+    }
+    return null;
+  } catch (error) {
+    return null;
+  }
+}
+
+// Full parse: reads entire file for message counts and summary (only called for matched sessions)
 async function parseCodexSessionFile(filePath) {
   try {
     const fileStream = fsSync.createReadStream(filePath);

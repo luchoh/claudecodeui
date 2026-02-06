@@ -31,12 +31,37 @@ const c = {
 
 console.log('PORT from env:', process.env.PORT);
 
+const PROJECTS_TIMING_ENABLED = process.env.PROJECTS_TIMING === 'true';
+const PROJECTS_TIMING_LOG_PATH = process.env.PROJECTS_TIMING_LOG_PATH || '/tmp/claudecodeui-projects-timing.log';
+const projectsTimingNowMs = () => Number(process.hrtime.bigint()) / 1e6;
+const appendProjectsHttpTimingLog = (line) => {
+  try {
+    fs.appendFileSync(PROJECTS_TIMING_LOG_PATH, `${line}\n`);
+  } catch (error) {
+    // Ignore logging failures
+  }
+};
+const logProjectsHttpTiming = (payload) => {
+  if (!PROJECTS_TIMING_ENABLED) return;
+  try {
+    const line = `[projects-http-timing] ${JSON.stringify(payload)}`;
+    console.log(line);
+    appendProjectsHttpTimingLog(line);
+  } catch (error) {
+    const fallback = '[projects-http-timing] {"error":"failed to serialize timing payload"}';
+    console.log(fallback);
+    appendProjectsHttpTimingLog(fallback);
+  }
+};
+let projectsTimingSeq = 0;
+
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
 import os from 'os';
 import http from 'http';
 import cors from 'cors';
 import helmet from 'helmet';
+import cookieParser from 'cookie-parser';
 import { doubleCsrf } from 'csrf-csrf';
 import { promises as fsPromises } from 'fs';
 import { spawn } from 'child_process';
@@ -73,6 +98,44 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:3001,h
   .split(',')
   .map(o => o.trim())
   .filter(Boolean);
+
+// SEC-003b: Network-based CORS (e.g., "10.10.10.0/24,192.168.3.0/24")
+const ALLOWED_NETWORKS = (process.env.ALLOWED_NETWORKS || '')
+  .split(',')
+  .map(n => n.trim())
+  .filter(Boolean);
+
+/**
+ * Check if an IP is within a CIDR range
+ * @param {string} ip - IP address to check
+ * @param {string} cidr - CIDR notation (e.g., "10.10.10.0/24")
+ * @returns {boolean}
+ */
+function ipInCidr(ip, cidr) {
+  const [range, bits] = cidr.split('/');
+  const mask = ~(2 ** (32 - parseInt(bits, 10)) - 1);
+  const ipNum = ip.split('.').reduce((acc, octet) => (acc << 8) + parseInt(octet, 10), 0);
+  const rangeNum = range.split('.').reduce((acc, octet) => (acc << 8) + parseInt(octet, 10), 0);
+  return (ipNum & mask) === (rangeNum & mask);
+}
+
+/**
+ * Check if origin is from an allowed network
+ * @param {string} origin - Origin URL (e.g., "http://10.10.10.55:5177")
+ * @returns {boolean}
+ */
+function isOriginFromAllowedNetwork(origin) {
+  if (!ALLOWED_NETWORKS.length) return false;
+  try {
+    const url = new URL(origin);
+    const host = url.hostname;
+    // Check if host is an IP address (not a hostname)
+    if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)) return false;
+    return ALLOWED_NETWORKS.some(cidr => ipInCidr(host, cidr));
+  } catch {
+    return false;
+  }
+}
 
 // SEC-004: Server binding configuration
 const BIND_HOST = process.env.BIND_HOST || '127.0.0.1';
@@ -226,6 +289,27 @@ async function setupProjectsWatcher() {
         // Debounce function to prevent excessive notifications
         let debounceTimer;
         const debouncedUpdate = async (eventType, filePath) => {
+            // Skip full re-scan for 'change' events on .jsonl files — these are just
+            // message appends to existing sessions and don't affect the project/session list.
+            // Only 'add' (new session file) and 'unlink' (deleted session) need a full re-scan.
+            if (eventType === 'change' && filePath.endsWith('.jsonl')) {
+                // Still notify clients about the changed file so ChatInterface can reload
+                // messages for externally-modified sessions, but skip the expensive getProjects()
+                const updateMessage = JSON.stringify({
+                    type: 'projects_updated',
+                    projects: null, // null signals "no project list change, just a file update"
+                    timestamp: new Date().toISOString(),
+                    changeType: eventType,
+                    changedFile: path.relative(claudeProjectsPath, filePath)
+                });
+                connectedClients.forEach(client => {
+                    if (client.readyState === WebSocket.OPEN) {
+                        client.send(updateMessage);
+                    }
+                });
+                return;
+            }
+
             clearTimeout(debounceTimer);
             debounceTimer = setTimeout(async () => {
                 // Prevent reentrant calls
@@ -338,12 +422,15 @@ const wss = new WebSocketServer({
 // Make WebSocket server available to routes
 app.locals.wss = wss;
 
-// SEC-003: CORS restriction with explicit origin whitelist
+// SEC-003: CORS restriction with explicit origin whitelist + network ranges
 app.use(cors({
   origin: (origin, callback) => {
     // Allow requests with no origin (curl, mobile apps, same-origin)
     if (!origin) return callback(null, true);
+    // Check explicit whitelist
     if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+    // Check network ranges (SEC-003b)
+    if (isOriginFromAllowedNetwork(origin)) return callback(null, true);
     console.warn(`[SECURITY] CORS blocked request from origin: ${origin}`);
     callback(new Error('CORS not allowed'));
   },
@@ -378,30 +465,64 @@ app.use(helmet({
 // SEC-009: Apply general rate limiting to all API routes
 app.use('/api', generalRateLimiter);
 
+// SEC-006: Cookie parser (required for CSRF protection)
+app.use(cookieParser());
+
 // SEC-006: CSRF protection for state-changing operations
 const isProduction = process.env.NODE_ENV === 'production';
-const { doubleCsrfProtection, generateToken } = doubleCsrf({
+const { doubleCsrfProtection, generateCsrfToken } = doubleCsrf({
   getSecret: () => process.env.CSRF_SECRET || process.env.JWT_SECRET || 'csrf-secret-change-in-production',
   cookieName: isProduction ? '__Host-csrf' : 'csrf',
   cookieOptions: {
-    httpOnly: true,
+    httpOnly: false, // Must be false so JS can read it for the header
     sameSite: 'strict',
     secure: isProduction,
     path: '/'
   },
   size: 64,
   ignoredMethods: ['GET', 'HEAD', 'OPTIONS'],
-  getTokenFromRequest: (req) => req.headers['x-csrf-token']
+  getCsrfTokenFromRequest: (req) => req.headers['x-csrf-token'],
+  getSessionIdentifier: (req) => req.ip || 'anonymous' // Use IP as session identifier
 });
 
 // SEC-006: Route to get CSRF token (must be called before state-changing requests)
 app.get('/api/csrf-token', (req, res) => {
-  const token = generateToken(req, res);
+  const token = generateCsrfToken(req, res);
   res.json({ csrfToken: token });
 });
 
 // SEC-006: Apply CSRF protection to state-changing API routes
 // Exclude routes that use their own auth (agent API uses API keys, WebSocket uses tickets)
+app.use('/api/projects', (req, res, next) => {
+  if (!PROJECTS_TIMING_ENABLED) {
+    return next();
+  }
+
+  const timingId = ++projectsTimingSeq;
+  const startMs = projectsTimingNowMs();
+  res.locals.projectsTiming = { id: timingId, startMs };
+
+  logProjectsHttpTiming({
+    event: 'request_start',
+    id: timingId,
+    method: req.method,
+    path: req.originalUrl
+  });
+
+  res.on('finish', () => {
+    logProjectsHttpTiming({
+      event: 'request_finish',
+      id: timingId,
+      method: req.method,
+      path: req.originalUrl,
+      status: res.statusCode,
+      ms: Math.round(projectsTimingNowMs() - startMs)
+    });
+  });
+
+  next();
+});
+
 app.use('/api/projects', doubleCsrfProtection);
 // SEC-007: Git CSRF protection removed (git routes removed)
 app.use('/api/settings', doubleCsrfProtection);
@@ -572,9 +693,35 @@ app.post('/api/system/update', authenticateToken, async (req, res) => {
 
 app.get('/api/projects', authenticateToken, async (req, res) => {
     try {
+        const timing = res.locals.projectsTiming;
+        const handlerStartMs = projectsTimingNowMs();
+        if (timing) {
+            logProjectsHttpTiming({
+                event: 'handler_start',
+                id: timing.id
+            });
+        }
+
         const projects = await getProjects(broadcastProgress);
+
+        if (timing) {
+            logProjectsHttpTiming({
+                event: 'handler_getProjects_complete',
+                id: timing.id,
+                ms: Math.round(projectsTimingNowMs() - handlerStartMs),
+                projects: projects.length
+            });
+        }
         res.json(projects);
     } catch (error) {
+        const timing = res.locals.projectsTiming;
+        if (timing) {
+            logProjectsHttpTiming({
+                event: 'handler_error',
+                id: timing.id,
+                error: error.message
+            });
+        }
         res.status(500).json({ error: error.message });
     }
 });

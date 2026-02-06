@@ -1,7 +1,7 @@
 import ClaudeLogo from '../ClaudeLogo';
 import CursorLogo from '../CursorLogo';
 import CodexLogo from '../CodexLogo';
-import { useTranslation } from 'react-i18next';
+
 
 const agentConfig = {
   claude: {
@@ -43,7 +43,6 @@ const colorClasses = {
 };
 
 export default function AgentListItem({ agentId, authStatus, isSelected, onClick, isMobile = false }) {
-  const { t } = useTranslation('settings');
   const config = agentConfig[agentId];
   const colors = colorClasses[config.color];
   const { Logo } = config;
@@ -86,18 +85,18 @@ export default function AgentListItem({ agentId, authStatus, isSelected, onClick
       </div>
       <div className="text-xs text-muted-foreground pl-6">
         {authStatus?.loading ? (
-          <span className="text-gray-400">{t('agents.authStatus.checking')}</span>
+          <span className="text-gray-400">{"Checking..."}</span>
         ) : authStatus?.authenticated ? (
           <div className="flex items-center gap-1">
             <span className={`w-1.5 h-1.5 rounded-full ${colors.dot}`} />
             <span className="truncate max-w-[120px]" title={authStatus.email}>
-              {authStatus.email || t('agents.authStatus.connected')}
+              {authStatus.email || "Connected"}
             </span>
           </div>
         ) : (
           <div className="flex items-center gap-1">
             <span className="w-1.5 h-1.5 rounded-full bg-gray-400" />
-            <span>{t('agents.authStatus.notConnected')}</span>
+            <span>{"Not connected"}</span>
           </div>
         )}
       </div>

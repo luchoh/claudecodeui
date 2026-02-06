@@ -4,7 +4,6 @@ import { ScrollArea } from './ui/scroll-area';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Input } from './ui/input';
-import { useTranslation } from 'react-i18next';
 
 import { FolderOpen, Folder, Plus, MessageSquare, Clock, ChevronDown, ChevronRight, Edit3, Check, X, Trash2, Settings, FolderPlus, RefreshCw, Sparkles, Edit2, Star, Search, AlertTriangle } from 'lucide-react';
 import { cn } from '../lib/utils';
@@ -19,13 +18,13 @@ import { useTasksSettings } from '../contexts/TasksSettingsContext';
 import { IS_PLATFORM } from '../constants/config';
 
 // Move formatTimeAgo outside component to avoid recreation on every render
-const formatTimeAgo = (dateString, currentTime, t) => {
+const formatTimeAgo = (dateString, currentTime) => {
   const date = new Date(dateString);
   const now = currentTime;
 
   // Check if date is valid
   if (isNaN(date.getTime())) {
-    return t ? t('status.unknown') : 'Unknown';
+    return 'Unknown';
   }
 
   const diffInMs = now - date;
@@ -34,13 +33,13 @@ const formatTimeAgo = (dateString, currentTime, t) => {
   const diffInHours = Math.floor(diffInMs / (1000 * 60 * 60));
   const diffInDays = Math.floor(diffInMs / (1000 * 60 * 60 * 24));
 
-  if (diffInSeconds < 60) return t ? t('time.justNow') : 'Just now';
-  if (diffInMinutes === 1) return t ? t('time.oneMinuteAgo') : '1 min ago';
-  if (diffInMinutes < 60) return t ? t('time.minutesAgo', { count: diffInMinutes }) : `${diffInMinutes} mins ago`;
-  if (diffInHours === 1) return t ? t('time.oneHourAgo') : '1 hour ago';
-  if (diffInHours < 24) return t ? t('time.hoursAgo', { count: diffInHours }) : `${diffInHours} hours ago`;
-  if (diffInDays === 1) return t ? t('time.oneDayAgo') : '1 day ago';
-  if (diffInDays < 7) return t ? t('time.daysAgo', { count: diffInDays }) : `${diffInDays} days ago`;
+  if (diffInSeconds < 60) return 'Just now';
+  if (diffInMinutes === 1) return '1 min ago';
+  if (diffInMinutes < 60) return `${diffInMinutes} mins ago`;
+  if (diffInHours === 1) return '1 hour ago';
+  if (diffInHours < 24) return `${diffInHours} hours ago`;
+  if (diffInDays === 1) return '1 day ago';
+  if (diffInDays < 7) return `${diffInDays} days ago`;
   return date.toLocaleDateString();
 };
 
@@ -66,7 +65,6 @@ function Sidebar({
   isMobile,
   onToggleSidebar
 }) {
-  const { t } = useTranslation('sidebar');
   const [expandedProjects, setExpandedProjects] = useState(new Set());
   const [editingProject, setEditingProject] = useState(null);
   const [showNewProject, setShowNewProject] = useState(false);
@@ -89,7 +87,7 @@ function Sidebar({
   const { setCurrentProject, mcpServerStatus } = useTaskMaster();
   const { tasksEnabled } = useTasksSettings();
 
-  
+
   // Starred projects state - persisted in localStorage
   const [starredProjects, setStarredProjects] = useState(() => {
     try {
@@ -174,14 +172,14 @@ function Sidebar({
     };
 
     window.addEventListener('storage', handleStorageChange);
-    
+
     // Also check periodically when component is focused (for same-tab changes)
     const checkInterval = setInterval(() => {
       if (document.hasFocus()) {
         loadSortOrder();
       }
     }, 1000);
-    
+
     return () => {
       window.removeEventListener('storage', handleStorageChange);
       clearInterval(checkInterval);
@@ -213,7 +211,7 @@ function Sidebar({
       newStarred.add(projectName);
     }
     setStarredProjects(newStarred);
-    
+
     // Persist to localStorage
     try {
       localStorage.setItem('starredProjects', JSON.stringify([...newStarred]));
@@ -247,13 +245,13 @@ function Sidebar({
     if (allSessions.length === 0) {
       return new Date(0); // Return epoch date for projects with no sessions
     }
-    
+
     // Find the most recent session activity
     const mostRecentDate = allSessions.reduce((latest, session) => {
       const sessionDate = new Date(session.lastActivity);
       return sessionDate > latest ? sessionDate : latest;
     }, new Date(0));
-    
+
     return mostRecentDate;
   };
 
@@ -261,11 +259,11 @@ function Sidebar({
   const sortedProjects = [...projects].sort((a, b) => {
     const aStarred = isProjectStarred(a.name);
     const bStarred = isProjectStarred(b.name);
-    
+
     // First, sort by starred status
     if (aStarred && !bStarred) return -1;
     if (!aStarred && bStarred) return 1;
-    
+
     // For projects with same starred status, sort by selected order
     if (projectSortOrder === 'date') {
       // Sort by most recent activity (descending)
@@ -305,7 +303,7 @@ function Sidebar({
     } catch (error) {
       console.error('Error renaming project:', error);
     }
-    
+
     setEditingProject(null);
     setEditingName('');
   };
@@ -344,11 +342,11 @@ function Sidebar({
       } else {
         const errorText = await response.text();
         console.error('[Sidebar] Failed to delete session:', { status: response.status, error: errorText });
-        alert(t('messages.deleteSessionFailed'));
+        alert('Failed to delete session. Please try again.');
       }
     } catch (error) {
       console.error('[Sidebar] Error deleting session:', error);
-      alert(t('messages.deleteSessionError'));
+      alert('Error deleting session. Please try again.');
     }
   };
 
@@ -376,11 +374,11 @@ function Sidebar({
       } else {
         const error = await response.json();
         console.error('Failed to delete project');
-        alert(error.error || t('messages.deleteProjectFailed'));
+        alert(error.error || 'Failed to delete project. Please try again.');
       }
     } catch (error) {
       console.error('Error deleting project:', error);
-      alert(t('messages.deleteProjectError'));
+      alert('Error deleting project. Please try again.');
     } finally {
       setDeletingProjects(prev => {
         const next = new Set(prev);
@@ -392,7 +390,7 @@ function Sidebar({
 
   const createNewProject = async () => {
     if (!newProjectPath.trim()) {
-      alert(t('messages.enterProjectPath'));
+      alert('Please enter a project path');
       return;
     }
 
@@ -418,11 +416,11 @@ function Sidebar({
         }
       } else {
         const error = await response.json();
-        alert(error.error || t('messages.createProjectFailed'));
+        alert(error.error || 'Failed to create project. Please try again.');
       }
     } catch (error) {
       console.error('Error creating project:', error);
-      alert(t('messages.createProjectError'));
+      alert('Error creating project. Please try again.');
     } finally {
       setCreatingProject(false);
     }
@@ -436,7 +434,7 @@ function Sidebar({
   const loadMoreSessions = async (project) => {
     // Check if we can load more sessions
     const canLoadMore = project.sessionMeta?.hasMore !== false;
-    
+
     if (!canLoadMore || loadingSessions[project.name]) {
       return;
     }
@@ -446,10 +444,10 @@ function Sidebar({
     try {
       const currentSessionCount = (project.sessions?.length || 0) + (additionalSessions[project.name]?.length || 0);
       const response = await api.sessions(project.name, 5, currentSessionCount);
-      
+
       if (response.ok) {
         const result = await response.json();
-        
+
         // Store additional sessions locally
         setAdditionalSessions(prev => ({
           ...prev,
@@ -458,7 +456,7 @@ function Sidebar({
             ...result.sessions
           ]
         }));
-        
+
         // Update project metadata if needed
         if (result.hasMore === false) {
           // Mark that there are no more sessions to load
@@ -475,11 +473,11 @@ function Sidebar({
   // Filter projects based on search input
   const filteredProjects = sortedProjects.filter(project => {
     if (!searchFilter.trim()) return true;
-    
+
     const searchLower = searchFilter.toLowerCase();
     const displayName = (project.displayName || project.name).toLowerCase();
     const projectName = project.name.toLowerCase();
-    
+
     // Search in both display name and actual project name/path
     return displayName.includes(searchLower) || projectName.includes(searchLower);
   });
@@ -488,7 +486,7 @@ function Sidebar({
   const handleProjectSelect = (project) => {
     // Call the original project select handler
     onProjectSelect(project);
-    
+
     // Update TaskMaster context with the selected project
     setCurrentProject(project);
   };
@@ -522,10 +520,10 @@ function Sidebar({
                 </div>
                 <div className="flex-1 min-w-0">
                   <h3 className="text-lg font-semibold text-foreground mb-2">
-                    {t('deleteConfirmation.deleteProject')}
+                    {"Delete Project"}
                   </h3>
                   <p className="text-sm text-muted-foreground mb-1">
-                    {t('deleteConfirmation.confirmDelete')}{' '}
+                    {"Are you sure you want to delete"}{' '}
                     <span className="font-medium text-foreground">
                       {deleteConfirmation.project.displayName || deleteConfirmation.project.name}
                     </span>?
@@ -533,15 +531,17 @@ function Sidebar({
                   {deleteConfirmation.sessionCount > 0 && (
                     <div className="mt-3 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
                       <p className="text-sm text-red-700 dark:text-red-300 font-medium">
-                        {t('deleteConfirmation.sessionCount', { count: deleteConfirmation.sessionCount })}
+                        {deleteConfirmation.sessionCount === 1
+                          ? `This project contains ${deleteConfirmation.sessionCount} conversation.`
+                          : `This project contains ${deleteConfirmation.sessionCount} conversations.`}
                       </p>
                       <p className="text-xs text-red-600 dark:text-red-400 mt-1">
-                        {t('deleteConfirmation.allConversationsDeleted')}
+                        {"All conversations will be permanently deleted."}
                       </p>
                     </div>
                   )}
                   <p className="text-xs text-muted-foreground mt-3">
-                    {t('deleteConfirmation.cannotUndo')}
+                    {"This action cannot be undone."}
                   </p>
                 </div>
               </div>
@@ -552,7 +552,7 @@ function Sidebar({
                 className="flex-1"
                 onClick={() => setDeleteConfirmation(null)}
               >
-                {t('actions.cancel')}
+                {"Cancel"}
               </Button>
               <Button
                 variant="destructive"
@@ -560,7 +560,7 @@ function Sidebar({
                 onClick={confirmDeleteProject}
               >
                 <Trash2 className="w-4 h-4 mr-2" />
-                {t('actions.delete')}
+                {"Delete"}
               </Button>
             </div>
           </div>
@@ -579,16 +579,16 @@ function Sidebar({
                 </div>
                 <div className="flex-1 min-w-0">
                   <h3 className="text-lg font-semibold text-foreground mb-2">
-                    {t('deleteConfirmation.deleteSession')}
+                    {"Delete Session"}
                   </h3>
                   <p className="text-sm text-muted-foreground mb-1">
-                    {t('deleteConfirmation.confirmDelete')}{' '}
+                    {"Are you sure you want to delete"}{' '}
                     <span className="font-medium text-foreground">
-                      {sessionDeleteConfirmation.sessionTitle || t('sessions.unnamed')}
+                      {sessionDeleteConfirmation.sessionTitle || "Unnamed"}
                     </span>?
                   </p>
                   <p className="text-xs text-muted-foreground mt-3">
-                    {t('deleteConfirmation.cannotUndo')}
+                    {"This action cannot be undone."}
                   </p>
                 </div>
               </div>
@@ -599,7 +599,7 @@ function Sidebar({
                 className="flex-1"
                 onClick={() => setSessionDeleteConfirmation(null)}
               >
-                {t('actions.cancel')}
+                {"Cancel"}
               </Button>
               <Button
                 variant="destructive"
@@ -607,7 +607,7 @@ function Sidebar({
                 onClick={confirmDeleteSession}
               >
                 <Trash2 className="w-4 h-4 mr-2" />
-                {t('actions.delete')}
+                {"Delete"}
               </Button>
             </div>
           </div>
@@ -627,14 +627,14 @@ function Sidebar({
             <a
               href="https://cloudcli.ai/dashboard"
               className="flex items-center gap-3 hover:opacity-80 transition-opacity group"
-              title={t('tooltips.viewEnvironments')}
+              title={"View Environments"}
             >
               <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center shadow-sm group-hover:shadow-md transition-shadow">
                 <MessageSquare className="w-4 h-4 text-primary-foreground" />
               </div>
               <div>
-                <h1 className="text-lg font-bold text-foreground">{t('app.title')}</h1>
-                <p className="text-sm text-muted-foreground">{t('app.subtitle')}</p>
+                <h1 className="text-lg font-bold text-foreground">{"Claude Code UI"}</h1>
+                <p className="text-sm text-muted-foreground">{"AI coding assistant interface"}</p>
               </div>
             </a>
           ) : (
@@ -643,8 +643,8 @@ function Sidebar({
                 <MessageSquare className="w-4 h-4 text-primary-foreground" />
               </div>
               <div>
-                <h1 className="text-lg font-bold text-foreground">{t('app.title')}</h1>
-                <p className="text-sm text-muted-foreground">{t('app.subtitle')}</p>
+                <h1 className="text-lg font-bold text-foreground">{"Claude Code UI"}</h1>
+                <p className="text-sm text-muted-foreground">{"AI coding assistant interface"}</p>
               </div>
             </div>
           )}
@@ -654,7 +654,7 @@ function Sidebar({
               size="sm"
               className="h-8 w-8 px-0 hover:bg-accent transition-colors duration-200"
               onClick={onToggleSidebar}
-              title={t('tooltips.hideSidebar')}
+              title={"Hide sidebar"}
             >
               <svg
                 className="w-4 h-4"
@@ -667,7 +667,7 @@ function Sidebar({
             </Button>
           )}
         </div>
-        
+
         {/* Mobile Header */}
         <div
           className="md:hidden p-3 border-b border-border"
@@ -678,14 +678,14 @@ function Sidebar({
               <a
                 href="https://cloudcli.ai/dashboard"
                 className="flex items-center gap-3 active:opacity-70 transition-opacity"
-                title={t('tooltips.viewEnvironments')}
+                title={"View Environments"}
               >
                 <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
                   <MessageSquare className="w-4 h-4 text-primary-foreground" />
                 </div>
                 <div>
-                  <h1 className="text-lg font-semibold text-foreground">{t('app.title')}</h1>
-                  <p className="text-sm text-muted-foreground">{t('projects.title')}</p>
+                  <h1 className="text-lg font-semibold text-foreground">{"Claude Code UI"}</h1>
+                  <p className="text-sm text-muted-foreground">{"Projects"}</p>
                 </div>
               </a>
             ) : (
@@ -694,8 +694,8 @@ function Sidebar({
                   <MessageSquare className="w-4 h-4 text-primary-foreground" />
                 </div>
                 <div>
-                  <h1 className="text-lg font-semibold text-foreground">{t('app.title')}</h1>
-                  <p className="text-sm text-muted-foreground">{t('projects.title')}</p>
+                  <h1 className="text-lg font-semibold text-foreground">{"Claude Code UI"}</h1>
+                  <p className="text-sm text-muted-foreground">{"Projects"}</p>
                 </div>
               </div>
             )}
@@ -734,10 +734,10 @@ function Sidebar({
               size="sm"
               className="flex-1 h-8 text-xs bg-primary hover:bg-primary/90 transition-all duration-200"
               onClick={() => setShowNewProject(true)}
-              title={t('tooltips.createProject')}
+              title={"Create new project"}
             >
               <FolderPlus className="w-3.5 h-3.5 mr-1.5" />
-              {t('projects.newProject')}
+              {"New Project"}
             </Button>
             <Button
               variant="outline"
@@ -752,7 +752,7 @@ function Sidebar({
                 }
               }}
               disabled={isRefreshing}
-              title={t('tooltips.refresh')}
+              title={"Refresh projects and sessions (Ctrl+R)"}
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''} group-hover:rotate-180 transition-transform duration-300`} />
             </Button>
@@ -767,7 +767,7 @@ function Sidebar({
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
               type="text"
-              placeholder={t('projects.searchPlaceholder')}
+              placeholder={"Search projects..."}
               value={searchFilter}
               onChange={(e) => setSearchFilter(e.target.value)}
               className="pl-9 h-9 text-sm bg-muted/50 border-0 focus:bg-background focus:ring-1 focus:ring-primary/20"
@@ -783,7 +783,7 @@ function Sidebar({
           </div>
         </div>
       )}
-      
+
       {/* Projects List */}
       <ScrollArea className="flex-1 md:px-2 md:py-3 overflow-y-auto overscroll-contain">
         <div className="md:space-y-1 pb-safe-area-inset-bottom">
@@ -792,11 +792,11 @@ function Sidebar({
               <div className="w-12 h-12 bg-muted rounded-lg flex items-center justify-center mx-auto mb-4 md:mb-3">
                 <div className="w-6 h-6 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent" />
               </div>
-              <h3 className="text-base font-medium text-foreground mb-2 md:mb-1">{t('projects.loadingProjects')}</h3>
+              <h3 className="text-base font-medium text-foreground mb-2 md:mb-1">{"Loading projects..."}</h3>
               <p className="text-sm text-muted-foreground">
-                {t('projects.fetchingProjects')}
+                {"Fetching your Claude projects and sessions"}
               </p>
-              <h3 className="text-base font-medium text-foreground mb-2 md:mb-1">{t('projects.loadingProjects')}</h3>
+              <h3 className="text-base font-medium text-foreground mb-2 md:mb-1">{"Loading projects..."}</h3>
               {loadingProgress && loadingProgress.total > 0 ? (
                 <div className="space-y-2">
                   <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
@@ -806,7 +806,7 @@ function Sidebar({
                     />
                   </div>
                   <p className="text-sm text-muted-foreground">
-                    {loadingProgress.current}/{loadingProgress.total} {t('projects.projects')}
+                    {loadingProgress.current}/{loadingProgress.total} {"projects"}
                   </p>
                   {loadingProgress.currentProject && (
                     <p className="text-xs text-muted-foreground/70 truncate max-w-[200px] mx-auto" title={loadingProgress.currentProject}>
@@ -816,7 +816,7 @@ function Sidebar({
                 </div>
               ) : (
                 <p className="text-sm text-muted-foreground">
-                  {t('projects.fetchingProjects')}
+                  {"Fetching your Claude projects and sessions"}
                 </p>
               )}
             </div>
@@ -825,9 +825,9 @@ function Sidebar({
               <div className="w-12 h-12 bg-muted rounded-lg flex items-center justify-center mx-auto mb-4 md:mb-3">
                 <Folder className="w-6 h-6 text-muted-foreground" />
               </div>
-              <h3 className="text-base font-medium text-foreground mb-2 md:mb-1">{t('projects.noProjects')}</h3>
+              <h3 className="text-base font-medium text-foreground mb-2 md:mb-1">{"No projects found"}</h3>
               <p className="text-sm text-muted-foreground">
-                {t('projects.runClaudeCli')}
+                {"Run Claude CLI in a project directory to get started"}
               </p>
             </div>
           ) : filteredProjects.length === 0 ? (
@@ -835,9 +835,9 @@ function Sidebar({
               <div className="w-12 h-12 bg-muted rounded-lg flex items-center justify-center mx-auto mb-4 md:mb-3">
                 <Search className="w-6 h-6 text-muted-foreground" />
               </div>
-              <h3 className="text-base font-medium text-foreground mb-2 md:mb-1">{t('projects.noMatchingProjects')}</h3>
+              <h3 className="text-base font-medium text-foreground mb-2 md:mb-1">{"No matching projects"}</h3>
               <p className="text-sm text-muted-foreground">
-                {t('projects.tryDifferentSearch')}
+                {"Try adjusting your search term"}
               </p>
             </div>
           ) : (
@@ -884,7 +884,7 @@ function Sidebar({
                                   value={editingName}
                                   onChange={(e) => setEditingName(e.target.value)}
                                   className="w-full px-3 py-2 text-sm border-2 border-primary/40 focus:border-primary rounded-lg bg-background text-foreground shadow-sm focus:shadow-md transition-all duration-200 focus:outline-none"
-                                  placeholder={t('projects.projectNamePlaceholder')}
+                                  placeholder={"Project name"}
                                   autoFocus
                                   autoComplete="off"
                                   onClick={(e) => e.stopPropagation()}
@@ -959,8 +959,8 @@ function Sidebar({
                                 <button
                                   className={cn(
                                     "w-8 h-8 rounded-lg flex items-center justify-center active:scale-90 transition-all duration-150 border",
-                                    isStarred 
-                                      ? "bg-yellow-500/10 dark:bg-yellow-900/30 border-yellow-200 dark:border-yellow-800" 
+                                    isStarred
+                                      ? "bg-yellow-500/10 dark:bg-yellow-900/30 border-yellow-200 dark:border-yellow-800"
                                       : "bg-gray-500/10 dark:bg-gray-900/30 border-gray-200 dark:border-gray-800"
                                   )}
                                   onClick={(e) => {
@@ -968,12 +968,12 @@ function Sidebar({
                                     toggleStarProject(project.name);
                                   }}
                                   onTouchEnd={handleTouchClick(() => toggleStarProject(project.name))}
-                                  title={isStarred ? t('tooltips.removeFromFavorites') : t('tooltips.addToFavorites')}
+                                  title={isStarred ? "Remove from favorites" : "Add to favorites"}
                                 >
                                   <Star className={cn(
                                     "w-4 h-4 transition-colors",
-                                    isStarred 
-                                      ? "text-yellow-600 dark:text-yellow-400 fill-current" 
+                                    isStarred
+                                      ? "text-yellow-600 dark:text-yellow-400 fill-current"
                                       : "text-gray-600 dark:text-gray-400"
                                   )} />
                                 </button>
@@ -1010,7 +1010,7 @@ function Sidebar({
                         </div>
                       </div>
                     </div>
-                    
+
                     {/* Desktop Project Item */}
                     <Button
                       variant="ghost"
@@ -1047,7 +1047,7 @@ function Sidebar({
                                 value={editingName}
                                 onChange={(e) => setEditingName(e.target.value)}
                                 className="w-full px-2 py-1 text-sm border border-border rounded bg-background text-foreground focus:ring-2 focus:ring-primary/20"
-                                placeholder={t('projects.projectNamePlaceholder')}
+                                placeholder={"Project name"}
                                 autoFocus
                                 onKeyDown={(e) => {
                                   if (e.key === 'Enter') saveProjectName(project.name);
@@ -1079,7 +1079,7 @@ function Sidebar({
                           )}
                         </div>
                       </div>
-                      
+
                       <div className="flex items-center gap-1 flex-shrink-0">
                         {editingProject === project.name ? (
                           <>
@@ -1108,20 +1108,20 @@ function Sidebar({
                             <div
                               className={cn(
                                 "w-6 h-6 opacity-0 group-hover:opacity-100 transition-all duration-200 flex items-center justify-center rounded cursor-pointer touch:opacity-100",
-                                isStarred 
-                                  ? "hover:bg-yellow-50 dark:hover:bg-yellow-900/20 opacity-100" 
+                                isStarred
+                                  ? "hover:bg-yellow-50 dark:hover:bg-yellow-900/20 opacity-100"
                                   : "hover:bg-accent"
                               )}
                               onClick={(e) => {
                                 e.stopPropagation();
                                 toggleStarProject(project.name);
                               }}
-                              title={isStarred ? t('tooltips.removeFromFavorites') : t('tooltips.addToFavorites')}
+                              title={isStarred ? "Remove from favorites" : "Add to favorites"}
                             >
                               <Star className={cn(
                                 "w-3 h-3 transition-colors",
-                                isStarred 
-                                  ? "text-yellow-600 dark:text-yellow-400 fill-current" 
+                                isStarred
+                                  ? "text-yellow-600 dark:text-yellow-400 fill-current"
                                   : "text-muted-foreground"
                               )} />
                             </div>
@@ -1131,7 +1131,7 @@ function Sidebar({
                                 e.stopPropagation();
                                 startEditing(project);
                               }}
-                              title={t('tooltips.renameProject')}
+                              title={"Rename project (F2)"}
                             >
                               <Edit3 className="w-3 h-3" />
                             </div>
@@ -1141,7 +1141,7 @@ function Sidebar({
                                   e.stopPropagation();
                                   deleteProject(project);
                                 }}
-                                title={t('tooltips.deleteProject')}
+                                title={"Delete empty project (Delete)"}
                               >
                                 <Trash2 className="w-3 h-3 text-red-600 dark:text-red-400" />
                               </div>
@@ -1174,7 +1174,7 @@ function Sidebar({
                         ))
                       ) : getAllSessions(project).length === 0 && !loadingSessions[project.name] ? (
                         <div className="py-2 px-3 text-left">
-                          <p className="text-xs text-muted-foreground">{t('sessions.noSessions')}</p>
+                          <p className="text-xs text-muted-foreground">{"No sessions yet"}</p>
                         </div>
                       ) : (
                         getAllSessions(project).map((session) => {
@@ -1194,9 +1194,9 @@ function Sidebar({
 
                           // Get session display values
                           const getSessionName = () => {
-                            if (isCursorSession) return session.name || t('projects.untitledSession');
-                            if (isCodexSession) return session.summary || session.name || t('projects.codexSession');
-                            return session.summary || t('projects.newSession');
+                            if (isCursorSession) return session.name || "Untitled Session";
+                            if (isCodexSession) return session.summary || session.name || "Codex Session";
+                            return session.summary || "New Session";
                           };
                           const sessionName = getSessionName();
                           const getSessionTime = () => {
@@ -1206,7 +1206,7 @@ function Sidebar({
                           };
                           const sessionTime = getSessionTime();
                           const messageCount = session.messageCount || 0;
-                          
+
                           return (
                           <div key={session.id} className="group relative">
                             {/* Active session indicator dot */}
@@ -1252,7 +1252,7 @@ function Sidebar({
                                 <div className="flex items-center gap-1 mt-0.5">
                                       <Clock className="w-2.5 h-2.5 text-muted-foreground" />
                                       <span className="text-xs text-muted-foreground">
-                                        {formatTimeAgo(sessionTime, currentTime, t)}
+                                        {formatTimeAgo(sessionTime, currentTime)}
                                       </span>
                                       {messageCount > 0 && (
                                         <Badge variant="secondary" className="text-xs px-1 py-0 ml-auto">
@@ -1286,7 +1286,7 @@ function Sidebar({
                                 </div>
                               </div>
                             </div>
-                            
+
                             {/* Desktop Session Item */}
                             <div className="hidden md:block">
                               <Button
@@ -1313,7 +1313,7 @@ function Sidebar({
                                     <div className="flex items-center gap-1 mt-0.5">
                                       <Clock className="w-2.5 h-2.5 text-muted-foreground" />
                                       <span className="text-xs text-muted-foreground">
-                                        {formatTimeAgo(sessionTime, currentTime, t)}
+                                        {formatTimeAgo(sessionTime, currentTime)}
                                       </span>
                                       {messageCount > 0 && (
                                         <Badge variant="secondary" className="text-xs px-1 py-0 ml-auto group-hover:opacity-0 transition-opacity">
@@ -1360,7 +1360,7 @@ function Sidebar({
                                         e.stopPropagation();
                                         updateSessionSummary(project.name, session.id, editingSessionName);
                                       }}
-                                      title={t('tooltips.save')}
+                                      title={"Save"}
                                     >
                                       <Check className="w-3 h-3 text-green-600 dark:text-green-400" />
                                     </button>
@@ -1371,7 +1371,7 @@ function Sidebar({
                                         setEditingSession(null);
                                         setEditingSessionName('');
                                       }}
-                                      title={t('tooltips.cancel')}
+                                      title={"Cancel"}
                                     >
                                       <X className="w-3 h-3 text-gray-600 dark:text-gray-400" />
                                     </button>
@@ -1384,9 +1384,9 @@ function Sidebar({
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           setEditingSession(session.id);
-                                          setEditingSessionName(session.summary || t('projects.newSession'));
+                                          setEditingSessionName(session.summary || "New Session");
                                         }}
-                                        title={t('tooltips.editSessionName')}
+                                        title={"Manually edit session name"}
                                       >
                                         <Edit2 className="w-3 h-3 text-gray-600 dark:text-gray-400" />
                                       </button>
@@ -1397,7 +1397,7 @@ function Sidebar({
                                         e.stopPropagation();
                                         showDeleteSessionConfirmation(project.name, session.id, sessionName, session.__provider);
                                       }}
-                                      title={t('tooltips.deleteSession')}
+                                      title={"Delete this session permanently"}
                                     >
                                       <Trash2 className="w-3 h-3 text-red-600 dark:text-red-400" />
                                     </button>
@@ -1423,17 +1423,17 @@ function Sidebar({
                           {loadingSessions[project.name] ? (
                             <>
                               <div className="w-3 h-3 animate-spin rounded-full border border-muted-foreground border-t-transparent" />
-                              {t('sessions.loading')}
+                              {"Loading..."}
                             </>
                           ) : (
                             <>
                               <ChevronDown className="w-3 h-3" />
-                              {t('sessions.showMore')}
+                              {"Show more sessions"}
                             </>
                           )}
                         </Button>
                       )}
-                      
+
                       {/* Sessions - New Session Button */}
                       <div className="md:hidden px-3 pb-2">
                         <button
@@ -1444,10 +1444,10 @@ function Sidebar({
                           }}
                         >
                           <Plus className="w-3 h-3" />
-                          {t('sessions.newSession')}
+                          {"New Session"}
                         </button>
                       </div>
-                      
+
                       <Button
                         variant="default"
                         size="sm"
@@ -1455,7 +1455,7 @@ function Sidebar({
                         onClick={() => onNewSession(project)}
                       >
                         <Plus className="w-3 h-3" />
-                        {t('sessions.newSession')}
+                        {"New Session"}
                       </Button>
                     </div>
                   )}
@@ -1465,7 +1465,7 @@ function Sidebar({
           )}
         </div>
       </ScrollArea>
-      
+
       {/* Version Update Notification */}
       {updateAvailable && (
         <div className="md:p-2 border-t border-border/50 flex-shrink-0">
@@ -1486,11 +1486,11 @@ function Sidebar({
                 <div className="text-sm font-medium text-blue-700 dark:text-blue-300">
                   {releaseInfo?.title || `Version ${latestVersion}`}
                 </div>
-                <div className="text-xs text-blue-600 dark:text-blue-400">{t('version.updateAvailable')}</div>
+                <div className="text-xs text-blue-600 dark:text-blue-400">{"Update available"}</div>
               </div>
             </Button>
           </div>
-          
+
           {/* Mobile Version Notification */}
           <div className="md:hidden p-3 pb-2">
             <button
@@ -1507,13 +1507,13 @@ function Sidebar({
                 <div className="text-sm font-medium text-blue-700 dark:text-blue-300">
                   {releaseInfo?.title || `Version ${latestVersion}`}
                 </div>
-                <div className="text-xs text-blue-600 dark:text-blue-400">{t('version.updateAvailable')}</div>
+                <div className="text-xs text-blue-600 dark:text-blue-400">{"Update available"}</div>
               </div>
             </button>
           </div>
         </div>
       )}
-      
+
       {/* Settings Section */}
       <div className="md:p-2 md:border-t md:border-border flex-shrink-0">
         {/* Mobile Settings */}
@@ -1525,10 +1525,10 @@ function Sidebar({
             <div className="w-10 h-10 rounded-2xl bg-background/80 flex items-center justify-center">
               <Settings className="w-5 h-5 text-muted-foreground" />
             </div>
-            <span className="text-lg font-medium text-foreground">{t('actions.settings')}</span>
+            <span className="text-lg font-medium text-foreground">{"Settings"}</span>
           </button>
         </div>
-        
+
         {/* Desktop Settings */}
         <Button
           variant="ghost"
@@ -1536,7 +1536,7 @@ function Sidebar({
           onClick={onShowSettings}
         >
           <Settings className="w-3 h-3" />
-          <span className="text-xs">{t('actions.settings')}</span>
+          <span className="text-xs">{"Settings"}</span>
         </Button>
       </div>
     </div>

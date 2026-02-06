@@ -1,7 +1,6 @@
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Shield, AlertTriangle, Plus, X } from 'lucide-react';
-import { useTranslation } from 'react-i18next';
 
 // Common tool patterns for Claude
 const commonClaudeTools = [
@@ -50,7 +49,6 @@ function ClaudePermissions({
   newDisallowedTool,
   setNewDisallowedTool,
 }) {
-  const { t } = useTranslation('settings');
   const addAllowedTool = (tool) => {
     if (tool && !allowedTools.includes(tool)) {
       setAllowedTools([...allowedTools, tool]);
@@ -80,7 +78,7 @@ function ClaudePermissions({
         <div className="flex items-center gap-3">
           <AlertTriangle className="w-5 h-5 text-orange-500" />
           <h3 className="text-lg font-medium text-foreground">
-            {t('permissions.title')}
+            Permission Settings
           </h3>
         </div>
         <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-lg p-4">
@@ -93,10 +91,10 @@ function ClaudePermissions({
             />
             <div>
               <div className="font-medium text-orange-900 dark:text-orange-100">
-                {t('permissions.skipPermissions.label')}
+                Skip permission prompts (use with caution)
               </div>
               <div className="text-sm text-orange-700 dark:text-orange-300">
-                {t('permissions.skipPermissions.claudeDescription')}
+                Equivalent to --dangerously-skip-permissions flag
               </div>
             </div>
           </label>
@@ -108,18 +106,18 @@ function ClaudePermissions({
         <div className="flex items-center gap-3">
           <Shield className="w-5 h-5 text-green-500" />
           <h3 className="text-lg font-medium text-foreground">
-            {t('permissions.allowedTools.title')}
+            Allowed Tools
           </h3>
         </div>
         <p className="text-sm text-muted-foreground">
-          {t('permissions.allowedTools.description')}
+          Tools that are automatically allowed without prompting for permission
         </p>
 
         <div className="flex flex-col sm:flex-row gap-2">
           <Input
             value={newAllowedTool}
             onChange={(e) => setNewAllowedTool(e.target.value)}
-            placeholder={t('permissions.allowedTools.placeholder')}
+            placeholder={'e.g., "Bash(git log:*)" or "Write"'}
             onKeyPress={(e) => {
               if (e.key === 'Enter') {
                 e.preventDefault();
@@ -135,14 +133,14 @@ function ClaudePermissions({
             className="h-10 px-4"
           >
             <Plus className="w-4 h-4 mr-2 sm:mr-0" />
-            <span className="sm:hidden">{t('permissions.actions.add')}</span>
+            <span className="sm:hidden">Add</span>
           </Button>
         </div>
 
         {/* Quick add buttons */}
         <div className="space-y-2">
           <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
-            {t('permissions.allowedTools.quickAdd')}
+            Quick add common tools:
           </p>
           <div className="flex flex-wrap gap-2">
             {commonClaudeTools.map(tool => (
@@ -178,7 +176,7 @@ function ClaudePermissions({
           ))}
           {allowedTools.length === 0 && (
             <div className="text-center py-6 text-gray-500 dark:text-gray-400">
-              {t('permissions.allowedTools.empty')}
+              No allowed tools configured
             </div>
           )}
         </div>
@@ -189,18 +187,18 @@ function ClaudePermissions({
         <div className="flex items-center gap-3">
           <AlertTriangle className="w-5 h-5 text-red-500" />
           <h3 className="text-lg font-medium text-foreground">
-            {t('permissions.blockedTools.title')}
+            Blocked Tools
           </h3>
         </div>
         <p className="text-sm text-muted-foreground">
-          {t('permissions.blockedTools.description')}
+          Tools that are automatically blocked without prompting for permission
         </p>
 
         <div className="flex flex-col sm:flex-row gap-2">
           <Input
             value={newDisallowedTool}
             onChange={(e) => setNewDisallowedTool(e.target.value)}
-            placeholder={t('permissions.blockedTools.placeholder')}
+            placeholder={'e.g., "Bash(rm:*)"'}
             onKeyPress={(e) => {
               if (e.key === 'Enter') {
                 e.preventDefault();
@@ -216,7 +214,7 @@ function ClaudePermissions({
             className="h-10 px-4"
           >
             <Plus className="w-4 h-4 mr-2 sm:mr-0" />
-            <span className="sm:hidden">{t('permissions.actions.add')}</span>
+            <span className="sm:hidden">Add</span>
           </Button>
         </div>
 
@@ -238,7 +236,7 @@ function ClaudePermissions({
           ))}
           {disallowedTools.length === 0 && (
             <div className="text-center py-6 text-gray-500 dark:text-gray-400">
-              {t('permissions.blockedTools.empty')}
+              No blocked tools configured
             </div>
           )}
         </div>
@@ -247,13 +245,13 @@ function ClaudePermissions({
       {/* Help Section */}
       <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
         <h4 className="font-medium text-blue-900 dark:text-blue-100 mb-2">
-          {t('permissions.toolExamples.title')}
+          Tool Pattern Examples:
         </h4>
         <ul className="text-sm text-blue-800 dark:text-blue-200 space-y-1">
-          <li><code className="bg-blue-100 dark:bg-blue-800 px-1 rounded">"Bash(git log:*)"</code> {t('permissions.toolExamples.bashGitLog')}</li>
-          <li><code className="bg-blue-100 dark:bg-blue-800 px-1 rounded">"Bash(git diff:*)"</code> {t('permissions.toolExamples.bashGitDiff')}</li>
-          <li><code className="bg-blue-100 dark:bg-blue-800 px-1 rounded">"Write"</code> {t('permissions.toolExamples.write')}</li>
-          <li><code className="bg-blue-100 dark:bg-blue-800 px-1 rounded">"Bash(rm:*)"</code> {t('permissions.toolExamples.bashRm')}</li>
+          <li><code className="bg-blue-100 dark:bg-blue-800 px-1 rounded">"Bash(git log:*)"</code> - Allow all git log commands</li>
+          <li><code className="bg-blue-100 dark:bg-blue-800 px-1 rounded">"Bash(git diff:*)"</code> - Allow all git diff commands</li>
+          <li><code className="bg-blue-100 dark:bg-blue-800 px-1 rounded">"Write"</code> - Allow all Write tool usage</li>
+          <li><code className="bg-blue-100 dark:bg-blue-800 px-1 rounded">"Bash(rm:*)"</code> - Block all rm commands (dangerous)</li>
         </ul>
       </div>
     </div>
@@ -273,7 +271,6 @@ function CursorPermissions({
   newDisallowedCommand,
   setNewDisallowedCommand,
 }) {
-  const { t } = useTranslation('settings');
   const addAllowedCommand = (cmd) => {
     if (cmd && !allowedCommands.includes(cmd)) {
       setAllowedCommands([...allowedCommands, cmd]);
@@ -303,7 +300,7 @@ function CursorPermissions({
         <div className="flex items-center gap-3">
           <AlertTriangle className="w-5 h-5 text-orange-500" />
           <h3 className="text-lg font-medium text-foreground">
-            {t('permissions.title')}
+            Permission Settings
           </h3>
         </div>
         <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-lg p-4">
@@ -316,10 +313,10 @@ function CursorPermissions({
             />
             <div>
               <div className="font-medium text-orange-900 dark:text-orange-100">
-                {t('permissions.skipPermissions.label')}
+                Skip permission prompts (use with caution)
               </div>
               <div className="text-sm text-orange-700 dark:text-orange-300">
-                {t('permissions.skipPermissions.cursorDescription')}
+                Equivalent to -f flag in Cursor CLI
               </div>
             </div>
           </label>
@@ -331,18 +328,18 @@ function CursorPermissions({
         <div className="flex items-center gap-3">
           <Shield className="w-5 h-5 text-green-500" />
           <h3 className="text-lg font-medium text-foreground">
-            {t('permissions.allowedCommands.title')}
+            Allowed Shell Commands
           </h3>
         </div>
         <p className="text-sm text-muted-foreground">
-          {t('permissions.allowedCommands.description')}
+          Shell commands that are automatically allowed without prompting
         </p>
 
         <div className="flex flex-col sm:flex-row gap-2">
           <Input
             value={newAllowedCommand}
             onChange={(e) => setNewAllowedCommand(e.target.value)}
-            placeholder={t('permissions.allowedCommands.placeholder')}
+            placeholder={'e.g., "Shell(ls)" or "Shell(git status)"'}
             onKeyPress={(e) => {
               if (e.key === 'Enter') {
                 e.preventDefault();
@@ -358,14 +355,14 @@ function CursorPermissions({
             className="h-10 px-4"
           >
             <Plus className="w-4 h-4 mr-2 sm:mr-0" />
-            <span className="sm:hidden">{t('permissions.actions.add')}</span>
+            <span className="sm:hidden">Add</span>
           </Button>
         </div>
 
         {/* Quick add buttons */}
         <div className="space-y-2">
           <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
-            {t('permissions.allowedCommands.quickAdd')}
+            Quick add common commands:
           </p>
           <div className="flex flex-wrap gap-2">
             {commonCursorCommands.map(cmd => (
@@ -401,7 +398,7 @@ function CursorPermissions({
           ))}
           {allowedCommands.length === 0 && (
             <div className="text-center py-6 text-gray-500 dark:text-gray-400">
-              {t('permissions.allowedCommands.empty')}
+              No allowed commands configured
             </div>
           )}
         </div>
@@ -412,18 +409,18 @@ function CursorPermissions({
         <div className="flex items-center gap-3">
           <AlertTriangle className="w-5 h-5 text-red-500" />
           <h3 className="text-lg font-medium text-foreground">
-            {t('permissions.blockedCommands.title')}
+            Blocked Shell Commands
           </h3>
         </div>
         <p className="text-sm text-muted-foreground">
-          {t('permissions.blockedCommands.description')}
+          Shell commands that are automatically blocked
         </p>
 
         <div className="flex flex-col sm:flex-row gap-2">
           <Input
             value={newDisallowedCommand}
             onChange={(e) => setNewDisallowedCommand(e.target.value)}
-            placeholder={t('permissions.blockedCommands.placeholder')}
+            placeholder={'e.g., "Shell(rm -rf)" or "Shell(sudo)"'}
             onKeyPress={(e) => {
               if (e.key === 'Enter') {
                 e.preventDefault();
@@ -439,7 +436,7 @@ function CursorPermissions({
             className="h-10 px-4"
           >
             <Plus className="w-4 h-4 mr-2 sm:mr-0" />
-            <span className="sm:hidden">{t('permissions.actions.add')}</span>
+            <span className="sm:hidden">Add</span>
           </Button>
         </div>
 
@@ -461,7 +458,7 @@ function CursorPermissions({
           ))}
           {disallowedCommands.length === 0 && (
             <div className="text-center py-6 text-gray-500 dark:text-gray-400">
-              {t('permissions.blockedCommands.empty')}
+              No blocked commands configured
             </div>
           )}
         </div>
@@ -470,13 +467,13 @@ function CursorPermissions({
       {/* Help Section */}
       <div className="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-lg p-4">
         <h4 className="font-medium text-purple-900 dark:text-purple-100 mb-2">
-          {t('permissions.shellExamples.title')}
+          Shell Command Examples:
         </h4>
         <ul className="text-sm text-purple-800 dark:text-purple-200 space-y-1">
-          <li><code className="bg-purple-100 dark:bg-purple-800 px-1 rounded">"Shell(ls)"</code> {t('permissions.shellExamples.ls')}</li>
-          <li><code className="bg-purple-100 dark:bg-purple-800 px-1 rounded">"Shell(git status)"</code> {t('permissions.shellExamples.gitStatus')}</li>
-          <li><code className="bg-purple-100 dark:bg-purple-800 px-1 rounded">"Shell(npm install)"</code> {t('permissions.shellExamples.npmInstall')}</li>
-          <li><code className="bg-purple-100 dark:bg-purple-800 px-1 rounded">"Shell(rm -rf)"</code> {t('permissions.shellExamples.rmRf')}</li>
+          <li><code className="bg-purple-100 dark:bg-purple-800 px-1 rounded">"Shell(ls)"</code> - Allow ls command</li>
+          <li><code className="bg-purple-100 dark:bg-purple-800 px-1 rounded">"Shell(git status)"</code> - Allow git status</li>
+          <li><code className="bg-purple-100 dark:bg-purple-800 px-1 rounded">"Shell(npm install)"</code> - Allow npm install</li>
+          <li><code className="bg-purple-100 dark:bg-purple-800 px-1 rounded">"Shell(rm -rf)"</code> - Block recursive delete</li>
         </ul>
       </div>
     </div>
@@ -485,18 +482,17 @@ function CursorPermissions({
 
 // Codex Permissions
 function CodexPermissions({ permissionMode, setPermissionMode }) {
-  const { t } = useTranslation('settings');
   return (
     <div className="space-y-6">
       <div className="space-y-4">
         <div className="flex items-center gap-3">
           <Shield className="w-5 h-5 text-green-500" />
           <h3 className="text-lg font-medium text-foreground">
-            {t('permissions.codex.permissionMode')}
+            Permission Mode
           </h3>
         </div>
         <p className="text-sm text-muted-foreground">
-          {t('permissions.codex.description')}
+          Controls how Codex handles file modifications and command execution
         </p>
 
         {/* Default Mode */}
@@ -517,9 +513,9 @@ function CodexPermissions({ permissionMode, setPermissionMode }) {
               className="mt-1 w-4 h-4 text-green-600"
             />
             <div>
-              <div className="font-medium text-foreground">{t('permissions.codex.modes.default.title')}</div>
+              <div className="font-medium text-foreground">Default</div>
               <div className="text-sm text-muted-foreground">
-                {t('permissions.codex.modes.default.description')}
+                Only trusted commands (ls, cat, grep, git status, etc.) run automatically. Other commands are skipped. Can write to workspace.
               </div>
             </div>
           </label>
@@ -543,9 +539,9 @@ function CodexPermissions({ permissionMode, setPermissionMode }) {
               className="mt-1 w-4 h-4 text-green-600"
             />
             <div>
-              <div className="font-medium text-green-900 dark:text-green-100">{t('permissions.codex.modes.acceptEdits.title')}</div>
+              <div className="font-medium text-green-900 dark:text-green-100">Accept Edits</div>
               <div className="text-sm text-green-700 dark:text-green-300">
-                {t('permissions.codex.modes.acceptEdits.description')}
+                All commands run automatically within the workspace. Full auto mode with sandboxed execution.
               </div>
             </div>
           </label>
@@ -570,11 +566,11 @@ function CodexPermissions({ permissionMode, setPermissionMode }) {
             />
             <div>
               <div className="font-medium text-orange-900 dark:text-orange-100 flex items-center gap-2">
-                {t('permissions.codex.modes.bypassPermissions.title')}
+                Bypass Permissions
                 <AlertTriangle className="w-4 h-4" />
               </div>
               <div className="text-sm text-orange-700 dark:text-orange-300">
-                {t('permissions.codex.modes.bypassPermissions.description')}
+                Full system access with no restrictions. All commands run automatically with full disk and network access. Use with caution.
               </div>
             </div>
           </label>
@@ -583,13 +579,13 @@ function CodexPermissions({ permissionMode, setPermissionMode }) {
         {/* Technical Details */}
         <details className="text-sm">
           <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
-            {t('permissions.codex.technicalDetails')}
+            Technical details
           </summary>
           <div className="mt-2 p-3 bg-gray-50 dark:bg-gray-900/50 rounded-lg text-xs text-muted-foreground space-y-2">
-            <p><strong>{t('permissions.codex.modes.default.title')}:</strong> {t('permissions.codex.technicalInfo.default')}</p>
-            <p><strong>{t('permissions.codex.modes.acceptEdits.title')}:</strong> {t('permissions.codex.technicalInfo.acceptEdits')}</p>
-            <p><strong>{t('permissions.codex.modes.bypassPermissions.title')}:</strong> {t('permissions.codex.technicalInfo.bypassPermissions')}</p>
-            <p className="text-xs opacity-75">{t('permissions.codex.technicalInfo.overrideNote')}</p>
+            <p><strong>Default:</strong> sandboxMode=workspace-write, approvalPolicy=untrusted. Trusted commands: cat, cd, grep, head, ls, pwd, tail, git status/log/diff/show, find (without -exec), etc.</p>
+            <p><strong>Accept Edits:</strong> sandboxMode=workspace-write, approvalPolicy=never. All commands auto-execute within project directory.</p>
+            <p><strong>Bypass Permissions:</strong> sandboxMode=danger-full-access, approvalPolicy=never. Full system access, use only in trusted environments.</p>
+            <p className="text-xs opacity-75">You can override this per-session using the mode button in the chat interface.</p>
           </div>
         </details>
       </div>

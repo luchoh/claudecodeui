@@ -21,7 +21,76 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { PrismLight as SyntaxHighlighter } from 'react-syntax-highlighter';
+import javascript from 'react-syntax-highlighter/dist/esm/languages/prism/javascript';
+import typescript from 'react-syntax-highlighter/dist/esm/languages/prism/typescript';
+import jsx from 'react-syntax-highlighter/dist/esm/languages/prism/jsx';
+import tsx from 'react-syntax-highlighter/dist/esm/languages/prism/tsx';
+import python from 'react-syntax-highlighter/dist/esm/languages/prism/python';
+import markup from 'react-syntax-highlighter/dist/esm/languages/prism/markup';
+import css from 'react-syntax-highlighter/dist/esm/languages/prism/css';
+import scss from 'react-syntax-highlighter/dist/esm/languages/prism/scss';
+import json from 'react-syntax-highlighter/dist/esm/languages/prism/json';
+import bash from 'react-syntax-highlighter/dist/esm/languages/prism/bash';
+import sql from 'react-syntax-highlighter/dist/esm/languages/prism/sql';
+import markdown from 'react-syntax-highlighter/dist/esm/languages/prism/markdown';
+import yaml from 'react-syntax-highlighter/dist/esm/languages/prism/yaml';
+import java from 'react-syntax-highlighter/dist/esm/languages/prism/java';
+import go from 'react-syntax-highlighter/dist/esm/languages/prism/go';
+import rust from 'react-syntax-highlighter/dist/esm/languages/prism/rust';
+import c from 'react-syntax-highlighter/dist/esm/languages/prism/c';
+import cpp from 'react-syntax-highlighter/dist/esm/languages/prism/cpp';
+import csharp from 'react-syntax-highlighter/dist/esm/languages/prism/csharp';
+import ruby from 'react-syntax-highlighter/dist/esm/languages/prism/ruby';
+import php from 'react-syntax-highlighter/dist/esm/languages/prism/php';
+import swift from 'react-syntax-highlighter/dist/esm/languages/prism/swift';
+import kotlin from 'react-syntax-highlighter/dist/esm/languages/prism/kotlin';
+import toml from 'react-syntax-highlighter/dist/esm/languages/prism/toml';
+import docker from 'react-syntax-highlighter/dist/esm/languages/prism/docker';
+import graphql from 'react-syntax-highlighter/dist/esm/languages/prism/graphql';
+
+SyntaxHighlighter.registerLanguage('javascript', javascript);
+SyntaxHighlighter.registerLanguage('js', javascript);
+SyntaxHighlighter.registerLanguage('typescript', typescript);
+SyntaxHighlighter.registerLanguage('ts', typescript);
+SyntaxHighlighter.registerLanguage('jsx', jsx);
+SyntaxHighlighter.registerLanguage('tsx', tsx);
+SyntaxHighlighter.registerLanguage('python', python);
+SyntaxHighlighter.registerLanguage('py', python);
+SyntaxHighlighter.registerLanguage('markup', markup);
+SyntaxHighlighter.registerLanguage('html', markup);
+SyntaxHighlighter.registerLanguage('xml', markup);
+SyntaxHighlighter.registerLanguage('svg', markup);
+SyntaxHighlighter.registerLanguage('css', css);
+SyntaxHighlighter.registerLanguage('scss', scss);
+SyntaxHighlighter.registerLanguage('json', json);
+SyntaxHighlighter.registerLanguage('bash', bash);
+SyntaxHighlighter.registerLanguage('sh', bash);
+SyntaxHighlighter.registerLanguage('shell', bash);
+SyntaxHighlighter.registerLanguage('sql', sql);
+SyntaxHighlighter.registerLanguage('markdown', markdown);
+SyntaxHighlighter.registerLanguage('md', markdown);
+SyntaxHighlighter.registerLanguage('yaml', yaml);
+SyntaxHighlighter.registerLanguage('yml', yaml);
+SyntaxHighlighter.registerLanguage('java', java);
+SyntaxHighlighter.registerLanguage('go', go);
+SyntaxHighlighter.registerLanguage('rust', rust);
+SyntaxHighlighter.registerLanguage('rs', rust);
+SyntaxHighlighter.registerLanguage('c', c);
+SyntaxHighlighter.registerLanguage('cpp', cpp);
+SyntaxHighlighter.registerLanguage('csharp', csharp);
+SyntaxHighlighter.registerLanguage('cs', csharp);
+SyntaxHighlighter.registerLanguage('ruby', ruby);
+SyntaxHighlighter.registerLanguage('rb', ruby);
+SyntaxHighlighter.registerLanguage('php', php);
+SyntaxHighlighter.registerLanguage('swift', swift);
+SyntaxHighlighter.registerLanguage('kotlin', kotlin);
+SyntaxHighlighter.registerLanguage('kt', kotlin);
+SyntaxHighlighter.registerLanguage('toml', toml);
+SyntaxHighlighter.registerLanguage('docker', docker);
+SyntaxHighlighter.registerLanguage('dockerfile', docker);
+SyntaxHighlighter.registerLanguage('graphql', graphql);
+SyntaxHighlighter.registerLanguage('gql', graphql);
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { useDropzone } from 'react-dropzone';
 import TodoList from './TodoList';
@@ -30,7 +99,6 @@ import CursorLogo from './CursorLogo.jsx';
 import CodexLogo from './CodexLogo.jsx';
 import NextTaskBanner from './NextTaskBanner.jsx';
 import { useTasksSettings } from '../contexts/TasksSettingsContext';
-import { useTranslation } from 'react-i18next';
 
 import ClaudeStatus from './ClaudeStatus';
 import TokenUsagePie from './TokenUsagePie';
@@ -345,7 +413,6 @@ function grantClaudeToolPermission(entry) {
 
 // Common markdown components to ensure consistent rendering (tables, inline code, links, etc.)
 const CodeBlock = ({ node, inline, className, children, ...props }) => {
-  const { t } = useTranslation('chat');
   const [copied, setCopied] = React.useState(false);
   const raw = Array.isArray(children) ? children.join('') : String(children ?? '');
   const looksMultiline = /[\r\n]/.test(raw);
@@ -419,15 +486,15 @@ const CodeBlock = ({ node, inline, className, children, ...props }) => {
           type="button"
           onClick={handleCopy}
           className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 focus:opacity-100 active:opacity-100 transition-opacity text-xs px-2 py-1 rounded-md bg-gray-700/80 hover:bg-gray-700 text-white border border-gray-600"
-          title={copied ? t('codeBlock.copied') : t('codeBlock.copyCode')}
-          aria-label={copied ? t('codeBlock.copied') : t('codeBlock.copyCode')}
+          title={copied ? "Copied" : "Copy code"}
+          aria-label={copied ? "Copied" : "Copy code"}
         >
           {copied ? (
             <span className="flex items-center gap-1">
               <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
                 <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
               </svg>
-              {t('codeBlock.copied')}
+              {"Copied"}
             </span>
           ) : (
             <span className="flex items-center gap-1">
@@ -435,7 +502,7 @@ const CodeBlock = ({ node, inline, className, children, ...props }) => {
                 <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                 <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"></path>
               </svg>
-              {t('codeBlock.copy')}
+              {"Copy"}
             </span>
           )}
         </button>
@@ -497,7 +564,6 @@ const markdownComponents = {
 
 // Memoized message component to prevent unnecessary re-renders
 const MessageComponent = memo(({ message, index, prevMessage, createDiff, onFileOpen, onShowSettings, onGrantToolPermission, autoExpandTools, showRawParameters, showThinking, selectedProject, provider }) => {
-  const { t } = useTranslation('chat');
   const isGrouped = prevMessage && prevMessage.type === message.type &&
                    ((prevMessage.type === 'assistant') ||
                     (prevMessage.type === 'user') ||
@@ -600,7 +666,7 @@ const MessageComponent = memo(({ message, index, prevMessage, createDiff, onFile
                 </div>
               )}
               <div className="text-sm font-medium text-gray-900 dark:text-white">
-                {message.type === 'error' ? t('messageTypes.error') : message.type === 'tool' ? t('messageTypes.tool') : ((localStorage.getItem('selected-provider') || 'claude') === 'cursor' ? t('messageTypes.cursor') : (localStorage.getItem('selected-provider') || 'claude') === 'codex' ? t('messageTypes.codex') : t('messageTypes.claude'))}
+                {message.type === 'error' ? "Error" : message.type === 'tool' ? "Tool" : ((localStorage.getItem('selected-provider') || 'claude') === 'cursor' ? "Cursor" : (localStorage.getItem('selected-provider') || 'claude') === 'codex' ? "Codex" : "Claude")}
               </div>
             </div>
           )}
@@ -628,8 +694,8 @@ const MessageComponent = memo(({ message, index, prevMessage, createDiff, onFile
                                 const input = JSON.parse(message.toolInput);
                                 return (
                                   <span className="font-mono truncate flex-1 min-w-0">
-                                    {input.pattern && <span>{t('search.pattern')} <span className="text-blue-600 dark:text-blue-400">{input.pattern}</span></span>}
-                                    {input.path && <span className="ml-2">{t('search.in')} {input.path}</span>}
+                                    {input.pattern && <span>{"pattern:"} <span className="text-blue-600 dark:text-blue-400">{input.pattern}</span></span>}
+                                    {input.path && <span className="ml-2">{"in:"} {input.path}</span>}
                                   </span>
                                 );
                               } catch (e) {
@@ -642,7 +708,7 @@ const MessageComponent = memo(({ message, index, prevMessage, createDiff, onFile
                               href={`#tool-result-${message.toolId}`}
                               className="flex-shrink-0 text-xs text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 font-medium transition-colors flex items-center gap-1"
                             >
-                              <span>{t('tools.searchResults')}</span>
+                              <span>{"results"}</span>
                               <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                               </svg>
@@ -686,7 +752,7 @@ const MessageComponent = memo(({ message, index, prevMessage, createDiff, onFile
                         onShowSettings();
                       }}
                       className="p-2 rounded-lg hover:bg-white/60 dark:hover:bg-gray-800/60 transition-all duration-200 group/btn backdrop-blur-sm"
-                      title={t('tools.settings')}
+                      title="Tool Settings"
                     >
                       <svg className="w-4 h-4 text-gray-600 dark:text-gray-400 group-hover/btn:text-blue-600 dark:group-hover/btn:text-blue-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
@@ -1832,7 +1898,6 @@ const ImageAttachment = ({ file, onRemove, uploadProgress, error }) => {
 // This ensures uninterrupted chat experience by pausing sidebar refreshes during conversations.
 function ChatInterface({ selectedProject, selectedSession, ws, sendMessage, latestMessage, onFileOpen, onInputFocusChange, onSessionActive, onSessionInactive, onSessionProcessing, onSessionNotProcessing, processingSessions, onReplaceTemporarySession, onNavigateToSession, onShowSettings, autoExpandTools, showRawParameters, showThinking, autoScrollToBottom, sendByCtrlEnter, externalMessageUpdate, onTaskClick, onShowAllTasks }) {
   const { tasksEnabled, isTaskMasterInstalled } = useTasksSettings();
-  const { t } = useTranslation('chat');
   const [input, setInput] = useState(() => {
     if (typeof window !== 'undefined' && selectedProject) {
       return safeLocalStorage.getItem(`draft_input_${selectedProject.name}`) || '';
@@ -4914,16 +4979,16 @@ function ChatInterface({ selectedProject, selectedSession, ws, sendMessage, late
           <div className="text-center text-gray-500 dark:text-gray-400 mt-8">
             <div className="flex items-center justify-center space-x-2">
               <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-400"></div>
-              <p>{t('session.loading.sessionMessages')}</p>
+              <p>Loading session messages...</p>
             </div>
           </div>
         ) : chatMessages.length === 0 ? (
           <div className="flex items-center justify-center h-full">
             {!selectedSession && !currentSessionId && (
               <div className="text-center px-6 sm:px-4 py-8">
-                <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-3">{t('providerSelection.title')}</h2>
+                <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-3">Choose Your AI Assistant</h2>
                 <p className="text-gray-600 dark:text-gray-400 mb-8">
-                  {t('providerSelection.description')}
+                  Select a provider to start a new conversation
                 </p>
                 
                 <div className="flex flex-col sm:flex-row gap-4 justify-center items-center mb-8">
@@ -4945,7 +5010,7 @@ function ChatInterface({ selectedProject, selectedSession, ws, sendMessage, late
                       <ClaudeLogo className="w-10 h-10" />
                       <div>
                         <p className="font-semibold text-gray-900 dark:text-white">Claude Code</p>
-                        <p className="text-xs text-gray-500 dark:text-gray-400">{t('providerSelection.providerInfo.anthropic')}</p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">by Anthropic</p>
                       </div>
                     </div>
                     {provider === 'claude' && (
@@ -4977,7 +5042,7 @@ function ChatInterface({ selectedProject, selectedSession, ws, sendMessage, late
                       <CursorLogo className="w-10 h-10" />
                       <div>
                         <p className="font-semibold text-gray-900 dark:text-white">Cursor</p>
-                        <p className="text-xs text-gray-500 dark:text-gray-400">{t('providerSelection.providerInfo.cursorEditor')}</p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">AI Code Editor</p>
                       </div>
                     </div>
                     {provider === 'cursor' && (
@@ -5009,7 +5074,7 @@ function ChatInterface({ selectedProject, selectedSession, ws, sendMessage, late
                       <CodexLogo className="w-10 h-10" />
                       <div>
                         <p className="font-semibold text-gray-900 dark:text-white">Codex</p>
-                        <p className="text-xs text-gray-500 dark:text-gray-400">{t('providerSelection.providerInfo.openai')}</p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">by OpenAI</p>
                       </div>
                     </div>
                     {provider === 'codex' && (
@@ -5027,7 +5092,7 @@ function ChatInterface({ selectedProject, selectedSession, ws, sendMessage, late
                 {/* Model Selection - Always reserve space to prevent jumping */}
                 <div className={`mb-6 transition-opacity duration-200 ${provider ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    {t('providerSelection.selectModel')}
+                    Select Model
                   </label>
                   {provider === 'claude' ? (
                     <select
@@ -5077,12 +5142,12 @@ function ChatInterface({ selectedProject, selectedSession, ws, sendMessage, late
                 
                 <p className="text-sm text-gray-500 dark:text-gray-400">
                   {provider === 'claude'
-                    ? t('providerSelection.readyPrompt.claude', { model: claudeModel })
+                    ? `Ready to use Claude with ${claudeModel}. Start typing your message below.`
                     : provider === 'cursor'
-                    ? t('providerSelection.readyPrompt.cursor', { model: cursorModel })
+                    ? `Ready to use Cursor with ${cursorModel}. Start typing your message below.`
                     : provider === 'codex'
-                    ? t('providerSelection.readyPrompt.codex', { model: codexModel })
-                    : t('providerSelection.readyPrompt.default')
+                    ? `Ready to use Codex with ${codexModel}. Start typing your message below.`
+                    : "Select a provider above to begin"
                   }
                 </p>
                 
@@ -5099,9 +5164,9 @@ function ChatInterface({ selectedProject, selectedSession, ws, sendMessage, late
             )}
             {selectedSession && (
               <div className="text-center text-gray-500 dark:text-gray-400 px-6 sm:px-4">
-                <p className="font-bold text-lg sm:text-xl mb-3">{t('session.continue.title')}</p>
+                <p className="font-bold text-lg sm:text-xl mb-3">Continue your conversation</p>
                 <p className="text-sm sm:text-base leading-relaxed">
-                  {t('session.continue.description')}
+                  Ask questions about your code, request changes, or get help with development tasks
                 </p>
                 
                 {/* Show NextTaskBanner for existing sessions too, only if TaskMaster is installed */}
@@ -5123,7 +5188,7 @@ function ChatInterface({ selectedProject, selectedSession, ws, sendMessage, late
               <div className="text-center text-gray-500 dark:text-gray-400 py-3">
                 <div className="flex items-center justify-center space-x-2">
                   <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-400"></div>
-                  <p className="text-sm">{t('session.loading.olderMessages')}</p>
+                  <p className="text-sm">Loading older messages...</p>
                 </div>
               </div>
             )}
@@ -5133,8 +5198,8 @@ function ChatInterface({ selectedProject, selectedSession, ws, sendMessage, late
               <div className="text-center text-gray-500 dark:text-gray-400 text-sm py-2 border-b border-gray-200 dark:border-gray-700">
                 {totalMessages > 0 && (
                   <span>
-                    {t('session.messages.showingOf', { shown: sessionMessages.length, total: totalMessages })} •
-                    <span className="text-xs">{t('session.messages.scrollToLoad')}</span>
+                    {`Showing ${sessionMessages.length} of ${totalMessages} messages`} •
+                    <span className="text-xs">Scroll up to load more</span>
                   </span>
                 )}
               </div>
@@ -5143,12 +5208,12 @@ function ChatInterface({ selectedProject, selectedSession, ws, sendMessage, late
             {/* Legacy message count indicator (for non-paginated view) */}
             {!hasMoreMessages && chatMessages.length > visibleMessageCount && (
               <div className="text-center text-gray-500 dark:text-gray-400 text-sm py-2 border-b border-gray-200 dark:border-gray-700">
-                {t('session.messages.showingLast', { count: visibleMessageCount, total: chatMessages.length })} •
+                {`Showing last ${visibleMessageCount} messages (${chatMessages.length} total)`} •
                 <button
                   className="ml-1 text-blue-600 hover:text-blue-700 underline"
                   onClick={loadEarlierMessages}
                 >
-                  {t('session.messages.loadEarlier')}
+                  Load earlier messages
                 </button>
               </div>
             )}
@@ -5333,7 +5398,7 @@ function ChatInterface({ selectedProject, selectedSession, ws, sendMessage, late
                   ? 'bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-300 border-orange-300 dark:border-orange-600 hover:bg-orange-100 dark:hover:bg-orange-900/30'
                   : 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border-blue-300 dark:border-blue-600 hover:bg-blue-100 dark:hover:bg-blue-900/30'
               }`}
-              title={t('input.clickToChangeMode')}
+              title="Click to change permission mode (or press Tab in input)"
             >
               <div className="flex items-center gap-2">
                 <div className={`w-2 h-2 rounded-full ${
@@ -5346,10 +5411,10 @@ function ChatInterface({ selectedProject, selectedSession, ws, sendMessage, late
                     : 'bg-blue-500'
                 }`} />
                 <span>
-                  {permissionMode === 'default' && t('codex.modes.default')}
-                  {permissionMode === 'acceptEdits' && t('codex.modes.acceptEdits')}
-                  {permissionMode === 'bypassPermissions' && t('codex.modes.bypassPermissions')}
-                  {permissionMode === 'plan' && t('codex.modes.plan')}
+                  {permissionMode === 'default' && "Default Mode"}
+                  {permissionMode === 'acceptEdits' && "Accept Edits"}
+                  {permissionMode === 'bypassPermissions' && "Bypass Permissions"}
+                  {permissionMode === 'plan' && "Plan Mode"}
                 </span>
               </div>
             </button>
@@ -5389,7 +5454,7 @@ function ChatInterface({ selectedProject, selectedSession, ws, sendMessage, late
                 }
               }}
               className="relative w-8 h-8 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 rounded-full flex items-center justify-center transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:ring-offset-gray-800"
-              title={t('input.showAllCommands')}
+              title="Show all commands"
             >
               <svg
                 className="w-5 h-5"
@@ -5586,7 +5651,7 @@ function ChatInterface({ selectedProject, selectedSession, ws, sendMessage, late
                 const isExpanded = e.target.scrollHeight > lineHeight * 2;
                 setIsTextareaExpanded(isExpanded);
               }}
-              placeholder={t('input.placeholder', { provider: provider === 'cursor' ? t('messageTypes.cursor') : provider === 'codex' ? t('messageTypes.codex') : t('messageTypes.claude') })}
+              placeholder={`Type / for commands, @ for files, or ask ${provider === 'cursor' ? 'Cursor' : provider === 'codex' ? 'Codex' : 'Claude'} anything...`}
               disabled={isLoading}
               className="chat-input-placeholder block w-full pl-12 pr-20 sm:pr-40 py-1.5 sm:py-4 bg-transparent rounded-2xl focus:outline-none text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 disabled:opacity-50 resize-none min-h-[50px] sm:min-h-[80px] max-h-[40vh] sm:max-h-[300px] overflow-y-auto text-base leading-6 transition-all duration-200"
               style={{ height: '50px' }}
@@ -5596,7 +5661,7 @@ function ChatInterface({ selectedProject, selectedSession, ws, sendMessage, late
               type="button"
               onClick={open}
               className="absolute left-2 top-1/2 transform -translate-y-1/2 p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
-              title={t('input.attachImages')}
+              title="Attach images"
             >
               <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
@@ -5645,8 +5710,8 @@ function ChatInterface({ selectedProject, selectedSession, ws, sendMessage, late
               input.trim() ? 'opacity-0' : 'opacity-100'
             }`}>
               {sendByCtrlEnter
-                ? t('input.hintText.ctrlEnter')
-                : t('input.hintText.enter')}
+                ? "Ctrl+Enter to send \u2022 Shift+Enter for new line \u2022 Tab to change modes \u2022 / for slash commands"
+                : "Enter to send \u2022 Shift+Enter for new line \u2022 Tab to change modes \u2022 / for slash commands"}
             </div>
             </div>
           </div>

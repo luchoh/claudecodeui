@@ -4,7 +4,7 @@ import { LogIn } from 'lucide-react';
 import ClaudeLogo from '../ClaudeLogo';
 import CursorLogo from '../CursorLogo';
 import CodexLogo from '../CodexLogo';
-import { useTranslation } from 'react-i18next';
+
 
 const agentConfig = {
   claude: {
@@ -39,8 +39,13 @@ const agentConfig = {
   },
 };
 
+const agentDescriptions = {
+  claude: "Anthropic Claude AI assistant",
+  cursor: "Cursor AI-powered code editor",
+  codex: "OpenAI Codex AI assistant"
+};
+
 export default function AccountContent({ agent, authStatus, onLogin }) {
-  const { t } = useTranslation('settings');
   const config = agentConfig[agent];
   const { Logo } = config;
 
@@ -50,7 +55,7 @@ export default function AccountContent({ agent, authStatus, onLogin }) {
         <Logo className="w-6 h-6" />
         <div>
           <h3 className="text-lg font-medium text-foreground">{config.name}</h3>
-          <p className="text-sm text-muted-foreground">{t(`agents.account.${agent}.description`)}</p>
+          <p className="text-sm text-muted-foreground">{agentDescriptions[agent]}</p>
         </div>
       </div>
 
@@ -60,30 +65,30 @@ export default function AccountContent({ agent, authStatus, onLogin }) {
           <div className="flex items-center gap-3">
             <div className="flex-1">
               <div className={`font-medium ${config.textClass}`}>
-                {t('agents.connectionStatus')}
+                {"Connection Status"}
               </div>
               <div className={`text-sm ${config.subtextClass}`}>
                 {authStatus?.loading ? (
-                  t('agents.authStatus.checkingAuth')
+                  "Checking authentication status..."
                 ) : authStatus?.authenticated ? (
-                  t('agents.authStatus.loggedInAs', { email: authStatus.email || t('agents.authStatus.authenticatedUser') })
+                  `Logged in as ${authStatus.email || "authenticated user"}`
                 ) : (
-                  t('agents.authStatus.notConnected')
+                  "Not connected"
                 )}
               </div>
             </div>
             <div>
               {authStatus?.loading ? (
                 <Badge variant="secondary" className="bg-gray-100 dark:bg-gray-800">
-                  {t('agents.authStatus.checking')}
+                  {"Checking..."}
                 </Badge>
               ) : authStatus?.authenticated ? (
                 <Badge variant="success" className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300">
-                  {t('agents.authStatus.connected')}
+                  {"Connected"}
                 </Badge>
               ) : (
                 <Badge variant="secondary" className="bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300">
-                  {t('agents.authStatus.disconnected')}
+                  {"Disconnected"}
                 </Badge>
               )}
             </div>
@@ -93,12 +98,12 @@ export default function AccountContent({ agent, authStatus, onLogin }) {
             <div className="flex items-center justify-between">
               <div>
                 <div className={`font-medium ${config.textClass}`}>
-                  {authStatus?.authenticated ? t('agents.login.reAuthenticate') : t('agents.login.title')}
+                  {authStatus?.authenticated ? "Re-authenticate" : "Login"}
                 </div>
                 <div className={`text-sm ${config.subtextClass}`}>
                   {authStatus?.authenticated
-                    ? t('agents.login.reAuthDescription')
-                    : t('agents.login.description', { agent: config.name })}
+                    ? "Sign in with a different account or refresh credentials"
+                    : `Sign in to your ${config.name} account to enable AI features`}
                 </div>
               </div>
               <Button
@@ -107,7 +112,7 @@ export default function AccountContent({ agent, authStatus, onLogin }) {
                 size="sm"
               >
                 <LogIn className="w-4 h-4 mr-2" />
-                {authStatus?.authenticated ? t('agents.login.reLoginButton') : t('agents.login.button')}
+                {authStatus?.authenticated ? "Re-login" : "Login"}
               </Button>
             </div>
           </div>
@@ -115,7 +120,7 @@ export default function AccountContent({ agent, authStatus, onLogin }) {
           {authStatus?.error && (
             <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
               <div className="text-sm text-red-600 dark:text-red-400">
-                {t('agents.error', { error: authStatus.error })}
+                {`Error: ${authStatus.error}`}
               </div>
             </div>
           )}

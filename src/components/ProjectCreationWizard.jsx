@@ -3,13 +3,11 @@ import { X, FolderPlus, ChevronRight, ChevronLeft, Check, Loader2, AlertCircle, 
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { api } from '../utils/api';
-import { useTranslation } from 'react-i18next';
 
 // SEC-007: GitHub clone functionality removed per user mandate
 // This wizard now only supports adding existing directories or creating new empty directories
 
 const ProjectCreationWizard = ({ onClose, onProjectCreated }) => {
-  const { t } = useTranslation();
   // Wizard state
   const [step, setStep] = useState(1); // 1: Choose type, 2: Configure, 3: Confirm
   const [workspaceType, setWorkspaceType] = useState('existing'); // 'existing' or 'new' - default to 'existing'
@@ -69,13 +67,13 @@ const ProjectCreationWizard = ({ onClose, onProjectCreated }) => {
 
     if (step === 1) {
       if (!workspaceType) {
-        setError(t('projectWizard.errors.selectType'));
+        setError('Please select whether you have an existing workspace or want to create a new one');
         return;
       }
       setStep(2);
     } else if (step === 2) {
       if (!workspacePath.trim()) {
-        setError(t('projectWizard.errors.providePath'));
+        setError('Please provide a workspace path');
         return;
       }
       setStep(3);
@@ -101,7 +99,7 @@ const ProjectCreationWizard = ({ onClose, onProjectCreated }) => {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.details || data.error || t('projectWizard.errors.failedToCreate'));
+        throw new Error(data.details || data.error || 'Failed to create workspace');
       }
 
       if (onProjectCreated) {
@@ -111,7 +109,7 @@ const ProjectCreationWizard = ({ onClose, onProjectCreated }) => {
       onClose();
     } catch (error) {
       console.error('Error creating workspace:', error);
-      setError(error.message || t('projectWizard.errors.failedToCreate'));
+      setError(error.message || 'Failed to create workspace');
     } finally {
       setIsCreating(false);
     }
@@ -163,14 +161,14 @@ const ProjectCreationWizard = ({ onClose, onProjectCreated }) => {
       const response = await api.createFolder(folderPath);
       const data = await response.json();
       if (!response.ok) {
-        throw new Error(data.error || t('projectWizard.errors.failedToCreateFolder', 'Failed to create folder'));
+        throw new Error(data.error || 'Failed to create folder');
       }
       setNewFolderName('');
       setShowNewFolderInput(false);
       await loadBrowserFolders(data.path || folderPath);
     } catch (error) {
       console.error('Error creating folder:', error);
-      setError(error.message || t('projectWizard.errors.failedToCreateFolder', 'Failed to create folder'));
+      setError(error.message || 'Failed to create folder');
     } finally {
       setCreatingFolder(false);
     }
@@ -186,7 +184,7 @@ const ProjectCreationWizard = ({ onClose, onProjectCreated }) => {
               <FolderPlus className="w-4 h-4 text-blue-600 dark:text-blue-400" />
             </div>
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-              {t('projectWizard.title')}
+              {"Create New Project"}
             </h3>
           </div>
           <button
@@ -216,7 +214,7 @@ const ProjectCreationWizard = ({ onClose, onProjectCreated }) => {
                     {s < step ? <Check className="w-4 h-4" /> : s}
                   </div>
                   <span className="text-sm font-medium text-gray-700 dark:text-gray-300 hidden sm:inline">
-                    {s === 1 ? t('projectWizard.steps.type') : s === 2 ? t('projectWizard.steps.configure') : t('projectWizard.steps.confirm')}
+                    {s === 1 ? 'Type' : s === 2 ? 'Configure' : 'Confirm'}
                   </span>
                 </div>
                 {s < 3 && (
@@ -248,7 +246,7 @@ const ProjectCreationWizard = ({ onClose, onProjectCreated }) => {
             <div className="space-y-4">
               <div>
                 <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
-                  {t('projectWizard.step1.question')}
+                  {"Do you already have a workspace, or would you like to create a new one?"}
                 </h4>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {/* Existing Workspace */}
@@ -266,10 +264,10 @@ const ProjectCreationWizard = ({ onClose, onProjectCreated }) => {
                       </div>
                       <div className="flex-1">
                         <h5 className="font-semibold text-gray-900 dark:text-white mb-1">
-                          {t('projectWizard.step1.existing.title')}
+                          {"Existing Workspace"}
                         </h5>
                         <p className="text-sm text-gray-600 dark:text-gray-400">
-                          {t('projectWizard.step1.existing.description')}
+                          {"I already have a workspace on my server and just need to add it to the project list"}
                         </p>
                       </div>
                     </div>
@@ -290,10 +288,10 @@ const ProjectCreationWizard = ({ onClose, onProjectCreated }) => {
                       </div>
                       <div className="flex-1">
                         <h5 className="font-semibold text-gray-900 dark:text-white mb-1">
-                          {t('projectWizard.step1.new.title')}
+                          {"New Workspace"}
                         </h5>
                         <p className="text-sm text-gray-600 dark:text-gray-400">
-                          {t('projectWizard.step1.new.description')}
+                          {"Create a new workspace, optionally clone from a GitHub repository"}
                         </p>
                       </div>
                     </div>
@@ -309,7 +307,7 @@ const ProjectCreationWizard = ({ onClose, onProjectCreated }) => {
               {/* Workspace Path */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  {workspaceType === 'existing' ? t('projectWizard.step2.existingPath') : t('projectWizard.step2.newPath')}
+                  {workspaceType === 'existing' ? 'Workspace Path' : 'Workspace Path'}
                 </label>
                 <div className="relative flex gap-2">
                   <div className="flex-1 relative">
@@ -347,8 +345,8 @@ const ProjectCreationWizard = ({ onClose, onProjectCreated }) => {
                 </div>
                 <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                   {workspaceType === 'existing'
-                    ? t('projectWizard.step2.existingHelp')
-                    : t('projectWizard.step2.newHelp')}
+                    ? 'Full path to your existing workspace directory'
+                    : 'Full path to your workspace directory'}
                 </p>
               </div>
             </div>
@@ -359,17 +357,17 @@ const ProjectCreationWizard = ({ onClose, onProjectCreated }) => {
             <div className="space-y-4">
               <div className="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
                 <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">
-                  {t('projectWizard.step3.reviewConfig')}
+                  {"Review Your Configuration"}
                 </h4>
                 <div className="space-y-2">
                   <div className="flex justify-between text-sm">
-                    <span className="text-gray-600 dark:text-gray-400">{t('projectWizard.step3.workspaceType')}</span>
+                    <span className="text-gray-600 dark:text-gray-400">{"Workspace Type:"}</span>
                     <span className="font-medium text-gray-900 dark:text-white">
-                      {workspaceType === 'existing' ? t('projectWizard.step3.existingWorkspace') : t('projectWizard.step3.newWorkspace')}
+                      {workspaceType === 'existing' ? 'Existing Workspace' : 'New Workspace'}
                     </span>
                   </div>
                   <div className="flex justify-between text-sm">
-                    <span className="text-gray-600 dark:text-gray-400">{t('projectWizard.step3.path')}</span>
+                    <span className="text-gray-600 dark:text-gray-400">{"Path:"}</span>
                     <span className="font-mono text-xs text-gray-900 dark:text-white break-all">
                       {workspacePath}
                     </span>
@@ -380,8 +378,8 @@ const ProjectCreationWizard = ({ onClose, onProjectCreated }) => {
               <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4 border border-blue-200 dark:border-blue-800">
                 <p className="text-sm text-blue-800 dark:text-blue-200">
                   {workspaceType === 'existing'
-                    ? t('projectWizard.step3.existingInfo')
-                    : t('projectWizard.step3.newEmpty')}
+                    ? 'The workspace will be added to your project list and will be available for Claude/Cursor sessions.'
+                    : 'The workspace will be added to your project list and will be available for Claude/Cursor sessions.'}
                 </p>
               </div>
             </div>
@@ -396,11 +394,11 @@ const ProjectCreationWizard = ({ onClose, onProjectCreated }) => {
             disabled={isCreating}
           >
             {step === 1 ? (
-              t('projectWizard.buttons.cancel')
+              'Cancel'
             ) : (
               <>
                 <ChevronLeft className="w-4 h-4 mr-1" />
-                {t('projectWizard.buttons.back')}
+                {"Back"}
               </>
             )}
           </Button>
@@ -412,16 +410,16 @@ const ProjectCreationWizard = ({ onClose, onProjectCreated }) => {
             {isCreating ? (
               <>
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                {t('projectWizard.buttons.creating')}
+                {"Creating..."}
               </>
             ) : step === 3 ? (
               <>
                 <Check className="w-4 h-4 mr-1" />
-                {t('projectWizard.buttons.createProject')}
+                {"Create Project"}
               </>
             ) : (
               <>
-                {t('projectWizard.buttons.next')}
+                {"Next"}
                 <ChevronRight className="w-4 h-4 ml-1" />
               </>
             )}

@@ -8,8 +8,42 @@ export default defineConfig(({ command, mode }) => {
   
   return {
     plugins: [react()],
+    optimizeDeps: {
+      exclude: ['refractor', 'highlight.js', 'lowlight'],
+      include: [
+        'react-syntax-highlighter',
+        'refractor/core',
+        'react-syntax-highlighter/dist/esm/languages/prism/javascript',
+        'react-syntax-highlighter/dist/esm/languages/prism/typescript',
+        'react-syntax-highlighter/dist/esm/languages/prism/jsx',
+        'react-syntax-highlighter/dist/esm/languages/prism/tsx',
+        'react-syntax-highlighter/dist/esm/languages/prism/python',
+        'react-syntax-highlighter/dist/esm/languages/prism/markup',
+        'react-syntax-highlighter/dist/esm/languages/prism/css',
+        'react-syntax-highlighter/dist/esm/languages/prism/scss',
+        'react-syntax-highlighter/dist/esm/languages/prism/json',
+        'react-syntax-highlighter/dist/esm/languages/prism/bash',
+        'react-syntax-highlighter/dist/esm/languages/prism/sql',
+        'react-syntax-highlighter/dist/esm/languages/prism/markdown',
+        'react-syntax-highlighter/dist/esm/languages/prism/yaml',
+        'react-syntax-highlighter/dist/esm/languages/prism/java',
+        'react-syntax-highlighter/dist/esm/languages/prism/go',
+        'react-syntax-highlighter/dist/esm/languages/prism/rust',
+        'react-syntax-highlighter/dist/esm/languages/prism/c',
+        'react-syntax-highlighter/dist/esm/languages/prism/cpp',
+        'react-syntax-highlighter/dist/esm/languages/prism/csharp',
+        'react-syntax-highlighter/dist/esm/languages/prism/ruby',
+        'react-syntax-highlighter/dist/esm/languages/prism/php',
+        'react-syntax-highlighter/dist/esm/languages/prism/swift',
+        'react-syntax-highlighter/dist/esm/languages/prism/kotlin',
+        'react-syntax-highlighter/dist/esm/languages/prism/toml',
+        'react-syntax-highlighter/dist/esm/languages/prism/docker',
+        'react-syntax-highlighter/dist/esm/languages/prism/graphql',
+      ]
+    },
     server: {
       port: parseInt(env.VITE_PORT) || 5173,
+      watch: null,
       proxy: {
         '/api': `http://localhost:${env.PORT || 3001}`,
         '/ws': {
