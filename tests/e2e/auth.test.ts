@@ -150,23 +150,23 @@ describe('SEC-002: Authentication & Token Refresh', () => {
       expect(res.body.error).toContain('Access denied');
     });
 
-    it('should return 403 with expired token', async () => {
+    it('should return 401 with expired token', async () => {
       // Register user first
       await registerUser(app);
 
       const expiredToken = generateExpiredToken();
       const res = await authenticatedGet(app, '/api/auth/user', expiredToken);
 
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(401);
       expect(res.body.error).toContain('Invalid token');
     });
 
-    it('should return 403 with invalid token', async () => {
+    it('should return 401 with invalid token', async () => {
       await registerUser(app);
 
       const res = await authenticatedGet(app, '/api/auth/user', 'invalid.token.here');
 
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(401);
     });
   });
 

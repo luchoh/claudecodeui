@@ -92,8 +92,8 @@ export const authenticatedFetch = async (url, options = {}) => {
     },
   });
 
-  // Handle 401 Unauthorized: try to refresh and retry
-  if (response.status === 401 && !IS_PLATFORM && !isLoggingOut) {
+  // Handle 401/403: try to refresh and retry
+  if ((response.status === 401 || response.status === 403) && !IS_PLATFORM && !isLoggingOut) {
     try {
       const newToken = await refreshAccessToken();
 
