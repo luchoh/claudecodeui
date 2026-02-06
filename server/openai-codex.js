@@ -264,14 +264,14 @@ export async function queryCodex(command, options = {}, ws) {
         sessionId: currentSessionId
       });
 
-      // Extract and send token usage if available (normalized to match Claude format)
+      // Extract and send token usage if available
+      // input_tokens represents current context window utilization (what was sent to the model)
       if (event.type === 'turn.completed' && event.usage) {
-        const totalTokens = (event.usage.input_tokens || 0) + (event.usage.output_tokens || 0);
         sendMessage(ws, {
           type: 'token-budget',
           data: {
-            used: totalTokens,
-            total: 200000 // Default context window for Codex models
+            used: event.usage.input_tokens || 0,
+            total: event.usage.model_context_window || 200000
           },
           sessionId: currentSessionId
         });

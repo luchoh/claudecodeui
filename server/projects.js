@@ -1789,11 +1789,19 @@ async function getCodexSessionMessages(sessionId, limit = null, offset = 0) {
           const entry = JSON.parse(line);
 
           // Extract token usage from token_count events (keep latest)
+          // Use last_token_usage.input_tokens for actual context window utilization,
+          // not total_token_usage which is cumulative billing across all turns.
           if (entry.type === 'event_msg' && entry.payload?.type === 'token_count' && entry.payload?.info) {
             const info = entry.payload.info;
-            if (info.total_token_usage) {
+            if (info.last_token_usage) {
               tokenUsage = {
-                used: info.total_token_usage.total_tokens || 0,
+                used: info.last_token_usage.input_tokens || 0,
+                total: info.model_context_window || 200000
+              };
+            } else if (info.total_token_usage) {
+              // Fallback for older session formats that lack last_token_usage
+              tokenUsage = {
+                used: info.total_token_usage.input_tokens || 0,
                 total: info.model_context_window || 200000
               };
             }

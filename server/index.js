@@ -2051,10 +2051,14 @@ app.get('/api/projects/:projectName/sessions/:sessionId/token-usage', authentica
           const entry = JSON.parse(lines[i]);
 
           // Codex stores token info in event_msg with type: "token_count"
+          // Use last_token_usage.input_tokens for context window utilization,
+          // not total_token_usage which is cumulative billing across all turns.
           if (entry.type === 'event_msg' && entry.payload?.type === 'token_count' && entry.payload?.info) {
             const tokenInfo = entry.payload.info;
-            if (tokenInfo.total_token_usage) {
-              totalTokens = tokenInfo.total_token_usage.total_tokens || 0;
+            if (tokenInfo.last_token_usage) {
+              totalTokens = tokenInfo.last_token_usage.input_tokens || 0;
+            } else if (tokenInfo.total_token_usage) {
+              totalTokens = tokenInfo.total_token_usage.input_tokens || 0;
             }
             if (tokenInfo.model_context_window) {
               contextWindow = tokenInfo.model_context_window;
