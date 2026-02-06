@@ -9,7 +9,7 @@ export default defineConfig(({ command, mode }) => {
   return {
     plugins: [react()],
     optimizeDeps: {
-      exclude: ['refractor', 'highlight.js', 'lowlight'],
+      exclude: ['refractor'],
       include: [
         'react-syntax-highlighter',
         'refractor/core',
