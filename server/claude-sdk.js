@@ -693,6 +693,13 @@ async function queryClaudeSDK(command, options = {}, ws) {
       sessionId: capturedSessionId || sessionId || null
     });
 
+    // Ensure the frontend knows the stream has ended even on error
+    ws.send({
+      type: 'claude-complete',
+      sessionId: capturedSessionId || sessionId || null,
+      error: true
+    });
+
     throw error;
   }
 }

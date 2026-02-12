@@ -1,28 +1,23 @@
 /*
- * MainContent.jsx - Main Content Area with Session Protection Props Passthrough
- * 
- * SESSION PROTECTION PASSTHROUGH:
- * ===============================
- * 
- * This component serves as a passthrough layer for Session Protection functions:
- * - Receives session management functions from App.jsx
- * - Passes them down to ChatInterface.jsx
- * 
- * No session protection logic is implemented here - it's purely a props bridge.
+ * MainContent.jsx - Main Content Area
+ *
+ * Session protection props and display settings now flow through ChatContext
+ * instead of being drilled through this component.
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, Suspense, lazy } from 'react';
 import ChatInterface from './ChatInterface';
 import FileTree from './FileTree';
-import CodeEditor from './CodeEditor';
-import StandaloneShell from './StandaloneShell';
+
+const CodeEditor = lazy(() => import('./CodeEditor'));
+const StandaloneShell = lazy(() => import('./StandaloneShell'));
+const PRDEditor = lazy(() => import('./PRDEditor'));
 // SEC-007: GitPanel removed - git features removed per user mandate
 import ErrorBoundary from './ErrorBoundary';
 import ClaudeLogo from './ClaudeLogo';
 import CursorLogo from './CursorLogo';
 import TaskList from './TaskList';
 import TaskDetail from './TaskDetail';
-import PRDEditor from './PRDEditor';
 import Tooltip from './Tooltip';
 import { useTaskMaster } from '../contexts/TaskMasterContext';
 import { useTasksSettings } from '../contexts/TasksSettingsContext';
@@ -41,22 +36,6 @@ function MainContent({
   onMenuClick,
   isLoading,
   onInputFocusChange,
-  // Session Protection Props: Functions passed down from App.jsx to manage active session state
-  // These functions control when project updates are paused during active conversations
-  onSessionActive,        // Mark session as active when user sends message
-  onSessionInactive,      // Mark session as inactive when conversation completes/aborts
-  onSessionProcessing,    // Mark session as processing (thinking/working)
-  onSessionNotProcessing, // Mark session as not processing (finished thinking)
-  processingSessions,     // Set of session IDs currently processing
-  onReplaceTemporarySession, // Replace temporary session ID with real session ID from WebSocket
-  onNavigateToSession,    // Navigate to a specific session (for Claude CLI session duplication workaround)
-  onShowSettings,         // Show tools settings panel
-  autoExpandTools,        // Auto-expand tool accordions
-  showRawParameters,      // Show raw parameters in tool accordions
-  showThinking,           // Show thinking/reasoning sections
-  autoScrollToBottom,     // Auto-scroll to bottom when new messages arrive
-  sendByCtrlEnter,        // Send by Ctrl+Enter mode for East Asian language input
-  externalMessageUpdate   // Trigger for external CLI updates to current session
 }) {
   const [editingFile, setEditingFile] = useState(null);
   const [selectedTask, setSelectedTask] = useState(null);
@@ -461,20 +440,6 @@ function MainContent({
               latestMessage={latestMessage}
               onFileOpen={handleFileOpen}
               onInputFocusChange={onInputFocusChange}
-              onSessionActive={onSessionActive}
-              onSessionInactive={onSessionInactive}
-              onSessionProcessing={onSessionProcessing}
-              onSessionNotProcessing={onSessionNotProcessing}
-              processingSessions={processingSessions}
-              onReplaceTemporarySession={onReplaceTemporarySession}
-              onNavigateToSession={onNavigateToSession}
-              onShowSettings={onShowSettings}
-              autoExpandTools={autoExpandTools}
-              showRawParameters={showRawParameters}
-              showThinking={showThinking}
-              autoScrollToBottom={autoScrollToBottom}
-              sendByCtrlEnter={sendByCtrlEnter}
-              externalMessageUpdate={externalMessageUpdate}
               onShowAllTasks={tasksEnabled ? () => setActiveTab('tasks') : null}
             />
           </ErrorBoundary>
@@ -486,11 +451,20 @@ function MainContent({
         )}
         {activeTab === 'shell' && (
           <div className="h-full w-full overflow-hidden">
-            <StandaloneShell
-              project={selectedProject}
-              session={selectedSession}
-              showHeader={false}
-            />
+            <Suspense fallback={
+              <div className="h-full flex items-center justify-center bg-gray-900">
+                <div className="flex items-center gap-3">
+                  <div className="w-6 h-6 rounded-full border-2 border-gray-600 border-t-green-500 animate-spin" />
+                  <span className="text-gray-400 text-sm">Loading terminal...</span>
+                </div>
+              </div>
+            }>
+              <StandaloneShell
+                project={selectedProject}
+                session={selectedSession}
+                showHeader={false}
+              />
+            </Suspense>
           </div>
         )}
         {shouldShowTasksTab && (
@@ -576,14 +550,23 @@ function MainContent({
               className={`flex-shrink-0 border-l border-gray-200 dark:border-gray-700 h-full overflow-hidden ${editorExpanded ? 'flex-1' : ''}`}
               style={editorExpanded ? {} : { width: `${editorWidth}px` }}
             >
-              <CodeEditor
-                file={editingFile}
-                onClose={handleCloseEditor}
-                projectPath={selectedProject?.path}
-                isSidebar={true}
-                isExpanded={editorExpanded}
-                onToggleExpand={handleToggleEditorExpand}
-              />
+              <Suspense fallback={
+                <div className="w-full h-full flex items-center justify-center bg-background">
+                  <div className="flex items-center gap-3">
+                    <div className="w-6 h-6 rounded-full border-2 border-gray-200 border-t-blue-500 animate-spin" />
+                    <span className="text-gray-500 dark:text-gray-400 text-sm">Loading editor...</span>
+                  </div>
+                </div>
+              }>
+                <CodeEditor
+                  file={editingFile}
+                  onClose={handleCloseEditor}
+                  projectPath={selectedProject?.path}
+                  isSidebar={true}
+                  isExpanded={editorExpanded}
+                  onToggleExpand={handleToggleEditorExpand}
+                />
+              </Suspense>
             </div>
           </>
         )}
@@ -591,12 +574,21 @@ function MainContent({
 
       {/* Code Editor Modal for Mobile */}
       {editingFile && isMobile && (
-        <CodeEditor
-          file={editingFile}
-          onClose={handleCloseEditor}
-          projectPath={selectedProject?.path}
-          isSidebar={false}
-        />
+        <Suspense fallback={
+          <div className="fixed inset-0 z-40 flex items-center justify-center bg-background">
+            <div className="flex items-center gap-3">
+              <div className="w-6 h-6 rounded-full border-2 border-gray-200 border-t-blue-500 animate-spin" />
+              <span className="text-gray-500 dark:text-gray-400 text-sm">Loading editor...</span>
+            </div>
+          </div>
+        }>
+          <CodeEditor
+            file={editingFile}
+            onClose={handleCloseEditor}
+            projectPath={selectedProject?.path}
+            isSidebar={false}
+          />
+        </Suspense>
       )}
 
       {/* Task Detail Modal */}
@@ -611,6 +603,7 @@ function MainContent({
       )}
       {/* PRD Editor Modal */}
       {showPRDEditor && (
+        <Suspense fallback={<div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500" /></div>}>
         <PRDEditor
           project={currentProject}
           projectPath={currentProject?.fullPath || currentProject?.path}
@@ -643,6 +636,7 @@ function MainContent({
             refreshTasks?.();
           }}
         />
+        </Suspense>
       )}
       {/* PRD Notification */}
       {prdNotification && (

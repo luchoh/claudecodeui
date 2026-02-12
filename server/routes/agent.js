@@ -1,6 +1,7 @@
 import express from 'express';
 import path from 'path';
 import { promises as fs } from 'fs';
+import rateLimit from 'express-rate-limit';
 import { userDb, apiKeysDb } from '../database/db.js';
 import { addProjectManually } from '../projects.js';
 import { queryClaudeSDK } from '../claude-sdk.js';
@@ -13,6 +14,21 @@ import { IS_PLATFORM } from '../constants/config.js';
 // The agent API now only works with existing local project paths
 
 const router = express.Router();
+
+/**
+ * SEC-009: Rate limiter for agent API endpoint
+ * Limits to 20 requests per minute to prevent abuse
+ */
+const agentRateLimiter = rateLimit({
+  windowMs: 60000, // 1 minute
+  max: 20, // 20 requests per minute
+  message: { error: 'Too many agent API requests, please try again later' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    return req.ip || req.socket.remoteAddress;
+  }
+});
 
 /**
  * Middleware to authenticate agent API requests.
@@ -284,7 +300,7 @@ class ResponseCollector {
  *     "stream": false
  *   }
  */
-router.post('/', validateExternalApiKey, async (req, res) => {
+router.post('/', agentRateLimiter, validateExternalApiKey, async (req, res) => {
   const { projectPath, message, provider = 'claude', model } = req.body;
 
   // Parse stream as boolean (handle string "true"/"false" from curl)

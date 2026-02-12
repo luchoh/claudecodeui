@@ -43,7 +43,7 @@ const ClaudeCommandSchema = z.object({
       mimeType: z.string().max(128).optional()
     })).max(10).optional()
   }).passthrough().optional()
-}).passthrough();
+});
 
 const CursorCommandSchema = z.object({
   type: z.literal('cursor-command'),
@@ -53,7 +53,7 @@ const CursorCommandSchema = z.object({
     sessionId: z.string().max(256).optional(),
     model: z.string().max(128).optional()
   }).passthrough().optional()
-}).passthrough();
+});
 
 const CodexCommandSchema = z.object({
   type: z.literal('codex-command'),
@@ -64,7 +64,7 @@ const CodexCommandSchema = z.object({
     sessionId: z.string().max(256).optional(),
     model: z.string().max(128).optional()
   }).passthrough().optional()
-}).passthrough();
+});
 
 const AbortSessionSchema = z.object({
   type: z.literal('abort-session'),

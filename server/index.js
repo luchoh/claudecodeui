@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+import crypto from 'crypto';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -56,23 +57,16 @@ const logProjectsHttpTiming = (payload) => {
 let projectsTimingSeq = 0;
 
 import express from 'express';
-import { WebSocketServer, WebSocket } from 'ws';
+import { WebSocketServer } from 'ws';
 import os from 'os';
 import http from 'http';
 import cors from 'cors';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import { doubleCsrf } from 'csrf-csrf';
-import { promises as fsPromises } from 'fs';
 import { spawn } from 'child_process';
-import pty from 'node-pty';
-import fetch from 'node-fetch';
-import mime from 'mime-types';
 
-import { getProjects, getSessions, getSessionMessages, renameProject, deleteSession, deleteProject, addProjectManually, extractProjectDirectory, clearProjectDirectoryCache } from './projects.js';
-import { queryClaudeSDK, abortClaudeSDKSession, isClaudeSDKSessionActive, getActiveClaudeSDKSessions, resolveToolApproval } from './claude-sdk.js';
-import { spawnCursor, abortCursorSession, isCursorSessionActive, getActiveCursorSessions } from './cursor-cli.js';
-import { queryCodex, abortCodexSession, isCodexSessionActive, getActiveCodexSessions } from './openai-codex.js';
+import { getProjects, getSessions, getSessionMessages, renameProject, deleteSession, deleteProject, addProjectManually } from './projects.js';
 // SEC-007: Git routes removed per user mandate (unnecessary bloat)
 import authRoutes from './routes/auth.js';
 import mcpRoutes from './routes/mcp.js';
@@ -87,292 +81,21 @@ import projectsRoutes, { WORKSPACES_ROOT, validateWorkspacePath } from './routes
 import cliAuthRoutes from './routes/cli-auth.js';
 import userRoutes from './routes/user.js';
 import codexRoutes from './routes/codex.js';
+import filesRoutes from './routes/files.js';
+import uploadsRoutes from './routes/uploads.js';
+import tokenUsageRoutes from './routes/token-usage.js';
 import { initializeDatabase } from './database/db.js';
 import { validateApiKey, authenticateToken, authenticateWebSocket, authenticateWebSocketWithTicket, validateSecurityConfig } from './middleware/auth.js';
 import { authRateLimiter, generalRateLimiter, errorSanitizer } from './middleware/security.js';
-import { validateShellMessage, validateChatMessage } from './middleware/ws-validation.js';
 import { IS_PLATFORM } from './constants/config.js';
 
-// SEC-003: CORS configuration
-const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:3001,http://localhost:5173')
-  .split(',')
-  .map(o => o.trim())
-  .filter(Boolean);
-
-// SEC-003b: Network-based CORS (e.g., "10.10.10.0/24,192.168.3.0/24")
-const ALLOWED_NETWORKS = (process.env.ALLOWED_NETWORKS || '')
-  .split(',')
-  .map(n => n.trim())
-  .filter(Boolean);
-
-/**
- * Check if an IP is within a CIDR range
- * @param {string} ip - IP address to check
- * @param {string} cidr - CIDR notation (e.g., "10.10.10.0/24")
- * @returns {boolean}
- */
-function ipInCidr(ip, cidr) {
-  const [range, bits] = cidr.split('/');
-  const mask = ~(2 ** (32 - parseInt(bits, 10)) - 1);
-  const ipNum = ip.split('.').reduce((acc, octet) => (acc << 8) + parseInt(octet, 10), 0);
-  const rangeNum = range.split('.').reduce((acc, octet) => (acc << 8) + parseInt(octet, 10), 0);
-  return (ipNum & mask) === (rangeNum & mask);
-}
-
-/**
- * Check if origin is from an allowed network
- * @param {string} origin - Origin URL (e.g., "http://10.10.10.55:5177")
- * @returns {boolean}
- */
-function isOriginFromAllowedNetwork(origin) {
-  if (!ALLOWED_NETWORKS.length) return false;
-  try {
-    const url = new URL(origin);
-    const host = url.hostname;
-    // Check if host is an IP address (not a hostname)
-    if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)) return false;
-    return ALLOWED_NETWORKS.some(cidr => ipInCidr(host, cidr));
-  } catch {
-    return false;
-  }
-}
-
-// SEC-004: Server binding configuration
-const BIND_HOST = process.env.BIND_HOST || '127.0.0.1';
-
-// SEC-006: Allowed PTY commands
-const ALLOWED_PTY_COMMANDS = new Set([
-  'claude', 'cursor-agent', 'codex', 'bash', 'zsh', 'sh'
-]);
-
-// SEC-012: PTY idle timeout (default 5 minutes)
-const PTY_IDLE_TIMEOUT = parseInt(process.env.PTY_IDLE_TIMEOUT || '300000', 10);
-
-// SEC-006: Multi-root workspace validation
-const WORKSPACES_ROOTS = (process.env.WORKSPACES_ROOT || os.homedir())
-  .split(',')
-  .map(p => path.resolve(p.trim()));
-
-/**
- * SEC-006: Validate that a path is within allowed workspace roots
- * @param {string} requestedPath - The path to validate
- * @returns {boolean} Whether the path is allowed
- */
-function isAllowedWorkspacePath(requestedPath) {
-  try {
-    const resolved = path.resolve(requestedPath);
-    // Try to get real path (follows symlinks)
-    let real;
-    try {
-      real = fs.realpathSync(resolved);
-    } catch (e) {
-      // Path doesn't exist yet, use resolved path
-      real = resolved;
-    }
-    return WORKSPACES_ROOTS.some(root =>
-      real === root || real.startsWith(root + path.sep)
-    );
-  } catch (e) {
-    return false;
-  }
-}
-
-/**
- * SEC-006: Validate a command against the allowlist
- * @param {string} cmd - The command to validate
- * @returns {{valid: boolean, cmd?: string, args?: string[], error?: string}}
- */
-function validatePtyCommand(cmd) {
-  if (!cmd) return { valid: true, cmd: null, args: [] };
-
-  // Reject shell metacharacters that could enable command injection
-  if (/[&;|`<>$(){}\\]/.test(cmd)) {
-    return { valid: false, error: 'Shell metacharacters not allowed in commands' };
-  }
-
-  const parts = cmd.trim().split(/\s+/);
-  const baseCmd = parts[0];
-
-  if (!ALLOWED_PTY_COMMANDS.has(baseCmd)) {
-    return {
-      valid: false,
-      error: `Command '${baseCmd}' not in allowlist. Allowed: ${Array.from(ALLOWED_PTY_COMMANDS).join(', ')}`
-    };
-  }
-
-  return { valid: true, cmd: baseCmd, args: parts.slice(1) };
-}
-
-/**
- * SEC-006: Escape a string for safe use in bash/sh
- * Uses single quotes and escapes embedded single quotes with '\''
- * @param {string} arg - The argument to escape
- * @returns {string} The escaped argument
- */
-function escapeShellArg(arg) {
-  if (!arg) return "''";
-  // Replace single quotes with '\'' (end quote, escaped quote, start quote)
-  return "'" + arg.replace(/'/g, "'\\''") + "'";
-}
-
-/**
- * SEC-006: Escape a string for PowerShell
- * Escapes backticks, double quotes, and dollar signs
- * @param {string} arg - The argument to escape
- * @returns {string} The escaped argument
- */
-function escapePowerShellArg(arg) {
-  if (!arg) return '""';
-  // Escape backticks, double quotes, and dollar signs
-  return '"' + arg.replace(/[`"$]/g, '`$&') + '"';
-}
-
-/**
- * SEC-006: Validate sessionId format (alphanumeric, hyphens, underscores only)
- * @param {string} sessionId - The session ID to validate
- * @returns {boolean} Whether the sessionId is valid
- */
-function isValidSessionId(sessionId) {
-  if (!sessionId) return true;
-  return /^[a-zA-Z0-9_-]+$/.test(sessionId);
-}
-
-// File system watcher for projects folder
-let projectsWatcher = null;
-const connectedClients = new Set();
-let isGetProjectsRunning = false; // Flag to prevent reentrant calls
-
-// Broadcast progress to all connected WebSocket clients
-function broadcastProgress(progress) {
-    const message = JSON.stringify({
-        type: 'loading_progress',
-        ...progress
-    });
-    connectedClients.forEach(client => {
-        if (client.readyState === WebSocket.OPEN) {
-            client.send(message);
-        }
-    });
-}
-
-// Setup file system watcher for Claude projects folder using chokidar
-async function setupProjectsWatcher() {
-    const chokidar = (await import('chokidar')).default;
-    const claudeProjectsPath = path.join(os.homedir(), '.claude', 'projects');
-
-    if (projectsWatcher) {
-        projectsWatcher.close();
-    }
-
-    try {
-        // Initialize chokidar watcher with optimized settings
-        projectsWatcher = chokidar.watch(claudeProjectsPath, {
-            ignored: [
-                '**/node_modules/**',
-                '**/.git/**',
-                '**/dist/**',
-                '**/build/**',
-                '**/*.tmp',
-                '**/*.swp',
-                '**/.DS_Store'
-            ],
-            persistent: true,
-            ignoreInitial: true, // Don't fire events for existing files on startup
-            followSymlinks: false,
-            depth: 10, // Reasonable depth limit
-            awaitWriteFinish: {
-                stabilityThreshold: 100, // Wait 100ms for file to stabilize
-                pollInterval: 50
-            }
-        });
-
-        // Debounce function to prevent excessive notifications
-        let debounceTimer;
-        const debouncedUpdate = async (eventType, filePath) => {
-            // Skip full re-scan for 'change' events on .jsonl files — these are just
-            // message appends to existing sessions and don't affect the project/session list.
-            // Only 'add' (new session file) and 'unlink' (deleted session) need a full re-scan.
-            if (eventType === 'change' && filePath.endsWith('.jsonl')) {
-                // Still notify clients about the changed file so ChatInterface can reload
-                // messages for externally-modified sessions, but skip the expensive getProjects()
-                const updateMessage = JSON.stringify({
-                    type: 'projects_updated',
-                    projects: null, // null signals "no project list change, just a file update"
-                    timestamp: new Date().toISOString(),
-                    changeType: eventType,
-                    changedFile: path.relative(claudeProjectsPath, filePath)
-                });
-                connectedClients.forEach(client => {
-                    if (client.readyState === WebSocket.OPEN) {
-                        client.send(updateMessage);
-                    }
-                });
-                return;
-            }
-
-            clearTimeout(debounceTimer);
-            debounceTimer = setTimeout(async () => {
-                // Prevent reentrant calls
-                if (isGetProjectsRunning) {
-                    return;
-                }
-
-                try {
-                    isGetProjectsRunning = true;
-
-                    // Clear project directory cache when files change
-                    clearProjectDirectoryCache();
-
-                    // Get updated projects list
-                    const updatedProjects = await getProjects(broadcastProgress);
-
-                    // Notify all connected clients about the project changes
-                    const updateMessage = JSON.stringify({
-                        type: 'projects_updated',
-                        projects: updatedProjects,
-                        timestamp: new Date().toISOString(),
-                        changeType: eventType,
-                        changedFile: path.relative(claudeProjectsPath, filePath)
-                    });
-
-                    connectedClients.forEach(client => {
-                        if (client.readyState === WebSocket.OPEN) {
-                            client.send(updateMessage);
-                        }
-                    });
-
-                } catch (error) {
-                    console.error('[ERROR] Error handling project changes:', error);
-                } finally {
-                    isGetProjectsRunning = false;
-                }
-            }, 300); // 300ms debounce (slightly faster than before)
-        };
-
-        // Set up event listeners
-        projectsWatcher
-            .on('add', (filePath) => debouncedUpdate('add', filePath))
-            .on('change', (filePath) => debouncedUpdate('change', filePath))
-            .on('unlink', (filePath) => debouncedUpdate('unlink', filePath))
-            .on('addDir', (dirPath) => debouncedUpdate('addDir', dirPath))
-            .on('unlinkDir', (dirPath) => debouncedUpdate('unlinkDir', dirPath))
-            .on('error', (error) => {
-                console.error('[ERROR] Chokidar watcher error:', error);
-            })
-            .on('ready', () => {
-            });
-
-    } catch (error) {
-        console.error('[ERROR] Failed to setup projects watcher:', error);
-    }
-}
-
+// Extracted modules
+import { ALLOWED_ORIGINS, isOriginFromAllowedNetwork, BIND_HOST } from './utils/security.js';
+import { broadcastProgress, setupProjectsWatcher, closeProjectWatcher } from './services/projectWatcher.js';
+import { setupWebSocketRouting } from './ws/router.js';
 
 const app = express();
 const server = http.createServer(app);
-
-const ptySessionsMap = new Map();
-const PTY_SESSION_TIMEOUT = 30 * 60 * 1000;
 
 // Single WebSocket server that handles both paths
 const wss = new WebSocketServer({
@@ -451,7 +174,7 @@ app.use(helmet({
       styleSrc: isDev
         ? ["'self'", "'unsafe-inline'"]
         : ["'self'"],
-      connectSrc: ["'self'", "ws:", "wss:", "http:", "https:"], // WebSocket connections
+      connectSrc: ["'self'"], // SEC: Tightened from wildcard ws:/wss:/http:/https:
       imgSrc: ["'self'", "data:", "blob:", "https:"],
       fontSrc: ["'self'", "data:"],
       frameAncestors: ["'none'"],
@@ -470,8 +193,10 @@ app.use(cookieParser());
 
 // SEC-006: CSRF protection for state-changing operations
 const isProduction = process.env.NODE_ENV === 'production';
+// SEC: Derive a CSRF-specific secret from JWT_SECRET to avoid reusing the JWT secret directly
+const CSRF_SECRET = process.env.CSRF_SECRET || (process.env.JWT_SECRET ? crypto.createHmac('sha256', process.env.JWT_SECRET).update('csrf-secret').digest('hex') : undefined);
 const { doubleCsrfProtection, generateCsrfToken } = doubleCsrf({
-  getSecret: () => process.env.CSRF_SECRET || process.env.JWT_SECRET || 'csrf-secret-change-in-production',
+  getSecret: () => CSRF_SECRET,
   cookieName: isProduction ? '__Host-csrf' : 'csrf',
   cookieOptions: {
     httpOnly: false, // Must be false so JS can read it for the header
@@ -592,6 +317,15 @@ app.use('/api/codex', authenticateToken, codexRoutes);
 
 // Agent API Routes (uses API key authentication)
 app.use('/api/agent', agentRoutes);
+
+// File operations routes (browse-filesystem, create-folder, file read/write/list)
+app.use('/api', filesRoutes);
+
+// Upload routes (transcribe, upload-images)
+app.use('/api', uploadsRoutes);
+
+// Token usage routes
+app.use('/api', tokenUsageRoutes);
 
 // Serve public files (like api-docs.html)
 app.use(express.static(path.join(__dirname, '../public')));
@@ -741,13 +475,13 @@ app.get('/api/projects/:projectName/sessions/:sessionId/messages', authenticateT
     try {
         const { projectName, sessionId } = req.params;
         const { limit, offset } = req.query;
-        
+
         // Parse limit and offset if provided
         const parsedLimit = limit ? parseInt(limit, 10) : null;
         const parsedOffset = offset ? parseInt(offset, 10) : 0;
-        
+
         const result = await getSessionMessages(projectName, sessionId, parsedLimit, parsedOffset);
-        
+
         // Handle both old and new response formats
         if (Array.isArray(result)) {
             // Backward compatibility: no pagination parameters were provided
@@ -807,1356 +541,18 @@ app.post('/api/projects/create', authenticateToken, async (req, res) => {
             return res.status(400).json({ error: 'Project path is required' });
         }
 
+        // SEC: Validate workspace path before adding project
+        const validation = await validateWorkspacePath(projectPath.trim());
+        if (!validation.valid) {
+            return res.status(403).json({ error: validation.error });
+        }
+
         const project = await addProjectManually(projectPath.trim());
         res.json({ success: true, project });
     } catch (error) {
         console.error('Error creating project:', error);
         res.status(500).json({ error: error.message });
     }
-});
-
-const expandWorkspacePath = (inputPath) => {
-    if (!inputPath) return inputPath;
-    if (inputPath === '~') {
-        return WORKSPACES_ROOT;
-    }
-    if (inputPath.startsWith('~/') || inputPath.startsWith('~\\')) {
-        return path.join(WORKSPACES_ROOT, inputPath.slice(2));
-    }
-    return inputPath;
-};
-
-// Browse filesystem endpoint for project suggestions - uses existing getFileTree
-app.get('/api/browse-filesystem', authenticateToken, async (req, res) => {
-    try {
-        const { path: dirPath } = req.query;
-        
-        console.log('[API] Browse filesystem request for path:', dirPath);
-        console.log('[API] WORKSPACES_ROOT is:', WORKSPACES_ROOT);
-        // Default to home directory if no path provided
-        const defaultRoot = WORKSPACES_ROOT;
-        let targetPath = dirPath ? expandWorkspacePath(dirPath) : defaultRoot;
-        
-        // Resolve and normalize the path
-        targetPath = path.resolve(targetPath);
-
-        // Security check - ensure path is within allowed workspace root
-        const validation = await validateWorkspacePath(targetPath);
-        if (!validation.valid) {
-            return res.status(403).json({ error: validation.error });
-        }
-        const resolvedPath = validation.resolvedPath || targetPath;
-        
-        // Security check - ensure path is accessible
-        try {
-            await fs.promises.access(resolvedPath);
-            const stats = await fs.promises.stat(resolvedPath);
-            
-            if (!stats.isDirectory()) {
-                return res.status(400).json({ error: 'Path is not a directory' });
-            }
-        } catch (err) {
-            return res.status(404).json({ error: 'Directory not accessible' });
-        }
-        
-        // Use existing getFileTree function with shallow depth (only direct children)
-        const fileTree = await getFileTree(resolvedPath, 1, 0, false); // maxDepth=1, showHidden=false
-        
-        // Filter only directories and format for suggestions
-        const directories = fileTree
-            .filter(item => item.type === 'directory')
-            .map(item => ({
-                path: item.path,
-                name: item.name,
-                type: 'directory'
-            }))
-            .sort((a, b) => {
-                const aHidden = a.name.startsWith('.');
-                const bHidden = b.name.startsWith('.');
-                if (aHidden && !bHidden) return 1;
-                if (!aHidden && bHidden) return -1;
-                return a.name.localeCompare(b.name);
-            });
-            
-        // Add common directories if browsing home directory
-        const suggestions = [];
-        let resolvedWorkspaceRoot = defaultRoot;
-        try {
-            resolvedWorkspaceRoot = await fsPromises.realpath(defaultRoot);
-        } catch (error) {
-            // Use default root as-is if realpath fails
-        }
-        if (resolvedPath === resolvedWorkspaceRoot) {
-            const commonDirs = ['Desktop', 'Documents', 'Projects', 'Development', 'Dev', 'Code', 'workspace'];
-            const existingCommon = directories.filter(dir => commonDirs.includes(dir.name));
-            const otherDirs = directories.filter(dir => !commonDirs.includes(dir.name));
-            
-            suggestions.push(...existingCommon, ...otherDirs);
-        } else {
-            suggestions.push(...directories);
-        }
-        
-        res.json({
-            path: resolvedPath,
-            suggestions: suggestions
-        });
-        
-    } catch (error) {
-        console.error('Error browsing filesystem:', error);
-        res.status(500).json({ error: 'Failed to browse filesystem' });
-    }
-});
-
-app.post('/api/create-folder', authenticateToken, async (req, res) => {
-    try {
-        const { path: folderPath } = req.body;
-        if (!folderPath) {
-            return res.status(400).json({ error: 'Path is required' });
-        }
-        const expandedPath = expandWorkspacePath(folderPath);
-        const resolvedInput = path.resolve(expandedPath);
-        const validation = await validateWorkspacePath(resolvedInput);
-        if (!validation.valid) {
-            return res.status(403).json({ error: validation.error });
-        }
-        const targetPath = validation.resolvedPath || resolvedInput;
-        const parentDir = path.dirname(targetPath);
-        try {
-            await fs.promises.access(parentDir);
-        } catch (err) {
-            return res.status(404).json({ error: 'Parent directory does not exist' });
-        }
-        try {
-            await fs.promises.access(targetPath);
-            return res.status(409).json({ error: 'Folder already exists' });
-        } catch (err) {
-            // Folder doesn't exist, which is what we want
-        }
-        try {
-            await fs.promises.mkdir(targetPath, { recursive: false });
-            res.json({ success: true, path: targetPath });
-        } catch (mkdirError) {
-            if (mkdirError.code === 'EEXIST') {
-                return res.status(409).json({ error: 'Folder already exists' });
-            }
-            throw mkdirError;
-        }
-    } catch (error) {
-        console.error('Error creating folder:', error);
-        res.status(500).json({ error: 'Failed to create folder' });
-    }
-});
-
-// Read file content endpoint
-app.get('/api/projects/:projectName/file', authenticateToken, async (req, res) => {
-    try {
-        const { projectName } = req.params;
-        const { filePath } = req.query;
-
-        console.log('[DEBUG] File read request:', projectName, filePath);
-
-        // Security: ensure the requested path is inside the project root
-        if (!filePath) {
-            return res.status(400).json({ error: 'Invalid file path' });
-        }
-
-        const projectRoot = await extractProjectDirectory(projectName).catch(() => null);
-        if (!projectRoot) {
-            return res.status(404).json({ error: 'Project not found' });
-        }
-
-        // Handle both absolute and relative paths
-        const resolved = path.isAbsolute(filePath)
-            ? path.resolve(filePath)
-            : path.resolve(projectRoot, filePath);
-        const normalizedRoot = path.resolve(projectRoot) + path.sep;
-        if (!resolved.startsWith(normalizedRoot)) {
-            return res.status(403).json({ error: 'Path must be under project root' });
-        }
-
-        const content = await fsPromises.readFile(resolved, 'utf8');
-        res.json({ content, path: resolved });
-    } catch (error) {
-        console.error('Error reading file:', error);
-        if (error.code === 'ENOENT') {
-            res.status(404).json({ error: 'File not found' });
-        } else if (error.code === 'EACCES') {
-            res.status(403).json({ error: 'Permission denied' });
-        } else {
-            res.status(500).json({ error: error.message });
-        }
-    }
-});
-
-// Serve binary file content endpoint (for images, etc.)
-app.get('/api/projects/:projectName/files/content', authenticateToken, async (req, res) => {
-    try {
-        const { projectName } = req.params;
-        const { path: filePath } = req.query;
-
-        console.log('[DEBUG] Binary file serve request:', projectName, filePath);
-
-        // Security: ensure the requested path is inside the project root
-        if (!filePath) {
-            return res.status(400).json({ error: 'Invalid file path' });
-        }
-
-        const projectRoot = await extractProjectDirectory(projectName).catch(() => null);
-        if (!projectRoot) {
-            return res.status(404).json({ error: 'Project not found' });
-        }
-
-        const resolved = path.resolve(filePath);
-        const normalizedRoot = path.resolve(projectRoot) + path.sep;
-        if (!resolved.startsWith(normalizedRoot)) {
-            return res.status(403).json({ error: 'Path must be under project root' });
-        }
-
-        // Check if file exists
-        try {
-            await fsPromises.access(resolved);
-        } catch (error) {
-            return res.status(404).json({ error: 'File not found' });
-        }
-
-        // Get file extension and set appropriate content type
-        const mimeType = mime.lookup(resolved) || 'application/octet-stream';
-        res.setHeader('Content-Type', mimeType);
-
-        // Stream the file
-        const fileStream = fs.createReadStream(resolved);
-        fileStream.pipe(res);
-
-        fileStream.on('error', (error) => {
-            console.error('Error streaming file:', error);
-            if (!res.headersSent) {
-                res.status(500).json({ error: 'Error reading file' });
-            }
-        });
-
-    } catch (error) {
-        console.error('Error serving binary file:', error);
-        if (!res.headersSent) {
-            res.status(500).json({ error: error.message });
-        }
-    }
-});
-
-// Save file content endpoint
-app.put('/api/projects/:projectName/file', authenticateToken, async (req, res) => {
-    try {
-        const { projectName } = req.params;
-        const { filePath, content } = req.body;
-
-        console.log('[DEBUG] File save request:', projectName, filePath);
-
-        // Security: ensure the requested path is inside the project root
-        if (!filePath) {
-            return res.status(400).json({ error: 'Invalid file path' });
-        }
-
-        if (content === undefined) {
-            return res.status(400).json({ error: 'Content is required' });
-        }
-
-        const projectRoot = await extractProjectDirectory(projectName).catch(() => null);
-        if (!projectRoot) {
-            return res.status(404).json({ error: 'Project not found' });
-        }
-
-        // Handle both absolute and relative paths
-        const resolved = path.isAbsolute(filePath)
-            ? path.resolve(filePath)
-            : path.resolve(projectRoot, filePath);
-        const normalizedRoot = path.resolve(projectRoot) + path.sep;
-        if (!resolved.startsWith(normalizedRoot)) {
-            return res.status(403).json({ error: 'Path must be under project root' });
-        }
-
-        // Write the new content
-        await fsPromises.writeFile(resolved, content, 'utf8');
-
-        res.json({
-            success: true,
-            path: resolved,
-            message: 'File saved successfully'
-        });
-    } catch (error) {
-        console.error('Error saving file:', error);
-        if (error.code === 'ENOENT') {
-            res.status(404).json({ error: 'File or directory not found' });
-        } else if (error.code === 'EACCES') {
-            res.status(403).json({ error: 'Permission denied' });
-        } else {
-            res.status(500).json({ error: error.message });
-        }
-    }
-});
-
-app.get('/api/projects/:projectName/files', authenticateToken, async (req, res) => {
-    try {
-
-        // Using fsPromises from import
-
-        // Use extractProjectDirectory to get the actual project path
-        let actualPath;
-        try {
-            actualPath = await extractProjectDirectory(req.params.projectName);
-        } catch (error) {
-            console.error('Error extracting project directory:', error);
-            // Fallback to simple dash replacement
-            actualPath = req.params.projectName.replace(/-/g, '/');
-        }
-
-        // Check if path exists
-        try {
-            await fsPromises.access(actualPath);
-        } catch (e) {
-            return res.status(404).json({ error: `Project path not found: ${actualPath}` });
-        }
-
-        const files = await getFileTree(actualPath, 10, 0, true);
-        const hiddenFiles = files.filter(f => f.name.startsWith('.'));
-        res.json(files);
-    } catch (error) {
-        console.error('[ERROR] File tree error:', error.message);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// WebSocket connection handler that routes based on URL path
-wss.on('connection', (ws, request) => {
-    const url = request.url;
-    console.log('[INFO] Client connected to:', url);
-
-    // Parse URL to get pathname without query parameters
-    const urlObj = new URL(url, 'http://localhost');
-    const pathname = urlObj.pathname;
-
-    if (pathname === '/shell') {
-        handleShellConnection(ws);
-    } else if (pathname === '/ws') {
-        handleChatConnection(ws);
-    } else {
-        console.log('[WARN] Unknown WebSocket path:', pathname);
-        ws.close();
-    }
-});
-
-/**
- * WebSocket Writer - Wrapper for WebSocket to match SSEStreamWriter interface
- */
-class WebSocketWriter {
-  constructor(ws) {
-    this.ws = ws;
-    this.sessionId = null;
-    this.isWebSocketWriter = true;  // Marker for transport detection
-  }
-
-  send(data) {
-    if (this.ws.readyState === 1) { // WebSocket.OPEN
-      // Providers send raw objects, we stringify for WebSocket
-      this.ws.send(JSON.stringify(data));
-    }
-  }
-
-  setSessionId(sessionId) {
-    this.sessionId = sessionId;
-  }
-
-  getSessionId() {
-    return this.sessionId;
-  }
-}
-
-// Handle chat WebSocket connections
-function handleChatConnection(ws) {
-    console.log('[INFO] Chat WebSocket connected');
-
-    // Add to connected clients for project updates
-    connectedClients.add(ws);
-
-    // Wrap WebSocket with writer for consistent interface with SSEStreamWriter
-    const writer = new WebSocketWriter(ws);
-
-    ws.on('message', async (message) => {
-        try {
-            // SEC-015: Validate message with Zod schema
-            const validationResult = validateChatMessage(message.toString());
-            if (!validationResult.success) {
-                console.warn('[SECURITY] Invalid chat message format:', validationResult.error);
-                writer.send({
-                    type: 'error',
-                    error: `Invalid message format: ${validationResult.error}`
-                });
-                return;
-            }
-            const data = validationResult.data;
-
-            if (data.type === 'claude-command') {
-                console.log('[DEBUG] User message:', data.command || '[Continue/Resume]');
-                console.log('📁 Project:', data.options?.projectPath || 'Unknown');
-                console.log('🔄 Session:', data.options?.sessionId ? 'Resume' : 'New');
-
-                // Use Claude Agents SDK
-                await queryClaudeSDK(data.command, data.options, writer);
-            } else if (data.type === 'cursor-command') {
-                console.log('[DEBUG] Cursor message:', data.command || '[Continue/Resume]');
-                console.log('📁 Project:', data.options?.cwd || 'Unknown');
-                console.log('🔄 Session:', data.options?.sessionId ? 'Resume' : 'New');
-                console.log('🤖 Model:', data.options?.model || 'default');
-                await spawnCursor(data.command, data.options, writer);
-            } else if (data.type === 'codex-command') {
-                console.log('[DEBUG] Codex message:', data.command || '[Continue/Resume]');
-                console.log('📁 Project:', data.options?.projectPath || data.options?.cwd || 'Unknown');
-                console.log('🔄 Session:', data.options?.sessionId ? 'Resume' : 'New');
-                console.log('🤖 Model:', data.options?.model || 'default');
-                await queryCodex(data.command, data.options, writer);
-            } else if (data.type === 'cursor-resume') {
-                // Backward compatibility: treat as cursor-command with resume and no prompt
-                console.log('[DEBUG] Cursor resume session (compat):', data.sessionId);
-                await spawnCursor('', {
-                    sessionId: data.sessionId,
-                    resume: true,
-                    cwd: data.options?.cwd
-                }, writer);
-            } else if (data.type === 'abort-session') {
-                console.log('[DEBUG] Abort session request:', data.sessionId);
-                const provider = data.provider || 'claude';
-                let success;
-
-                if (provider === 'cursor') {
-                    success = abortCursorSession(data.sessionId);
-                } else if (provider === 'codex') {
-                    success = abortCodexSession(data.sessionId);
-                } else {
-                    // Use Claude Agents SDK
-                    success = await abortClaudeSDKSession(data.sessionId);
-                }
-
-                writer.send({
-                    type: 'session-aborted',
-                    sessionId: data.sessionId,
-                    provider,
-                    success
-                });
-            } else if (data.type === 'claude-permission-response') {
-                // Relay UI approval decisions back into the SDK control flow.
-                // This does not persist permissions; it only resolves the in-flight request,
-                // introduced so the SDK can resume once the user clicks Allow/Deny.
-                if (data.requestId) {
-                    resolveToolApproval(data.requestId, {
-                        allow: Boolean(data.allow),
-                        updatedInput: data.updatedInput,
-                        message: data.message,
-                        rememberEntry: data.rememberEntry
-                    });
-                }
-            } else if (data.type === 'cursor-abort') {
-                console.log('[DEBUG] Abort Cursor session:', data.sessionId);
-                const success = abortCursorSession(data.sessionId);
-                writer.send({
-                    type: 'session-aborted',
-                    sessionId: data.sessionId,
-                    provider: 'cursor',
-                    success
-                });
-            } else if (data.type === 'check-session-status') {
-                // Check if a specific session is currently processing
-                const provider = data.provider || 'claude';
-                const sessionId = data.sessionId;
-                let isActive;
-
-                if (provider === 'cursor') {
-                    isActive = isCursorSessionActive(sessionId);
-                } else if (provider === 'codex') {
-                    isActive = isCodexSessionActive(sessionId);
-                } else {
-                    // Use Claude Agents SDK
-                    isActive = isClaudeSDKSessionActive(sessionId);
-                }
-
-                writer.send({
-                    type: 'session-status',
-                    sessionId,
-                    provider,
-                    isProcessing: isActive
-                });
-            } else if (data.type === 'get-active-sessions') {
-                // Get all currently active sessions
-                const activeSessions = {
-                    claude: getActiveClaudeSDKSessions(),
-                    cursor: getActiveCursorSessions(),
-                    codex: getActiveCodexSessions()
-                };
-                writer.send({
-                    type: 'active-sessions',
-                    sessions: activeSessions
-                });
-            }
-        } catch (error) {
-            console.error('[ERROR] Chat WebSocket error:', error.message);
-            writer.send({
-                type: 'error',
-                error: error.message
-            });
-        }
-    });
-
-    ws.on('close', () => {
-        console.log('🔌 Chat client disconnected');
-        // Remove from connected clients
-        connectedClients.delete(ws);
-    });
-}
-
-// Handle shell WebSocket connections
-function handleShellConnection(ws) {
-    console.log('🐚 Shell client connected');
-    let shellProcess = null;
-    let ptySessionKey = null;
-    let outputBuffer = [];
-
-    ws.on('message', async (message) => {
-        try {
-            // SEC-015: Validate message with Zod schema
-            const validationResult = validateShellMessage(message.toString());
-            if (!validationResult.success) {
-                console.warn('[SECURITY] Invalid shell message format:', validationResult.error);
-                ws.send(JSON.stringify({
-                    type: 'error',
-                    message: `Invalid message format: ${validationResult.error}`
-                }));
-                return;
-            }
-            const data = validationResult.data;
-            console.log('📨 Shell message received:', data.type);
-
-            if (data.type === 'init') {
-                const projectPath = data.projectPath || process.cwd();
-                const sessionId = data.sessionId;
-                const hasSession = data.hasSession;
-                const provider = data.provider || 'claude';
-                const initialCommand = data.initialCommand;
-                const isPlainShell = data.isPlainShell || (!!initialCommand && !hasSession) || provider === 'plain-shell';
-
-                // SEC-006: Validate sessionId format
-                if (sessionId && !isValidSessionId(sessionId)) {
-                    console.warn(`[SECURITY] Rejected invalid sessionId: ${sessionId}`);
-                    ws.send(JSON.stringify({
-                        type: 'error',
-                        message: 'Invalid session ID format'
-                    }));
-                    ws.close();
-                    return;
-                }
-
-                // SEC-006: Validate workspace path
-                if (!isAllowedWorkspacePath(projectPath)) {
-                    console.warn(`[SECURITY] Rejected path outside allowed workspace: ${projectPath}`);
-                    ws.send(JSON.stringify({
-                        type: 'error',
-                        message: 'Path not in allowed workspace. Check WORKSPACES_ROOT configuration.'
-                    }));
-                    ws.close();
-                    return;
-                }
-
-                // SEC-006: Validate command if plain shell mode
-                if (isPlainShell && initialCommand) {
-                    const cmdResult = validatePtyCommand(initialCommand);
-                    if (!cmdResult.valid) {
-                        console.warn(`[SECURITY] Rejected command: ${cmdResult.error}`);
-                        ws.send(JSON.stringify({
-                            type: 'error',
-                            message: cmdResult.error
-                        }));
-                        ws.close();
-                        return;
-                    }
-                }
-
-                // Login commands (Claude/Cursor auth) should never reuse cached sessions
-                const isLoginCommand = initialCommand && (
-                    initialCommand.includes('setup-token') ||
-                    initialCommand.includes('cursor-agent login') ||
-                    initialCommand.includes('auth login')
-                );
-
-                // Include command hash in session key so different commands get separate sessions
-                const commandSuffix = isPlainShell && initialCommand
-                    ? `_cmd_${Buffer.from(initialCommand).toString('base64').slice(0, 16)}`
-                    : '';
-                ptySessionKey = `${projectPath}_${sessionId || 'default'}${commandSuffix}`;
-
-                // Kill any existing login session before starting fresh
-                if (isLoginCommand) {
-                    const oldSession = ptySessionsMap.get(ptySessionKey);
-                    if (oldSession) {
-                        console.log('🧹 Cleaning up existing login session:', ptySessionKey);
-                        if (oldSession.timeoutId) clearTimeout(oldSession.timeoutId);
-                        if (oldSession.pty && oldSession.pty.kill) oldSession.pty.kill();
-                        ptySessionsMap.delete(ptySessionKey);
-                    }
-                }
-
-                const existingSession = isLoginCommand ? null : ptySessionsMap.get(ptySessionKey);
-                if (existingSession) {
-                    console.log('♻️  Reconnecting to existing PTY session:', ptySessionKey);
-                    shellProcess = existingSession.pty;
-
-                    clearTimeout(existingSession.timeoutId);
-
-                    ws.send(JSON.stringify({
-                        type: 'output',
-                        data: `\x1b[36m[Reconnected to existing session]\x1b[0m\r\n`
-                    }));
-
-                    if (existingSession.buffer && existingSession.buffer.length > 0) {
-                        console.log(`📜 Sending ${existingSession.buffer.length} buffered messages`);
-                        existingSession.buffer.forEach(bufferedData => {
-                            ws.send(JSON.stringify({
-                                type: 'output',
-                                data: bufferedData
-                            }));
-                        });
-                    }
-
-                    existingSession.ws = ws;
-
-                    return;
-                }
-
-                console.log('[INFO] Starting shell in:', projectPath);
-                console.log('📋 Session info:', hasSession ? `Resume session ${sessionId}` : (isPlainShell ? 'Plain shell mode' : 'New session'));
-                console.log('🤖 Provider:', isPlainShell ? 'plain-shell' : provider);
-                if (initialCommand) {
-                    console.log('⚡ Initial command:', initialCommand);
-                }
-
-                // First send a welcome message
-                let welcomeMsg;
-                if (isPlainShell) {
-                    welcomeMsg = `\x1b[36mStarting terminal in: ${projectPath}\x1b[0m\r\n`;
-                } else {
-                    const providerName = provider === 'cursor' ? 'Cursor' : 'Claude';
-                    welcomeMsg = hasSession ?
-                        `\x1b[36mResuming ${providerName} session ${sessionId} in: ${projectPath}\x1b[0m\r\n` :
-                        `\x1b[36mStarting new ${providerName} session in: ${projectPath}\x1b[0m\r\n`;
-                }
-
-                ws.send(JSON.stringify({
-                    type: 'output',
-                    data: welcomeMsg
-                }));
-
-                try {
-                    // Prepare the shell command adapted to the platform and provider
-                    // SEC-006: Use proper escaping for all user-supplied values
-                    let shellCommand;
-                    const isWindows = os.platform() === 'win32';
-                    const escapedPath = isWindows ? escapePowerShellArg(projectPath) : escapeShellArg(projectPath);
-
-                    if (isPlainShell) {
-                        // Plain shell mode - command already validated by validatePtyCommand
-                        if (isWindows) {
-                            shellCommand = `Set-Location -Path ${escapedPath}; ${initialCommand}`;
-                        } else {
-                            shellCommand = `cd ${escapedPath} && ${initialCommand}`;
-                        }
-                    } else if (provider === 'cursor') {
-                        // Use cursor-agent command
-                        if (isWindows) {
-                            if (hasSession && sessionId) {
-                                // sessionId already validated by isValidSessionId
-                                const escapedSessionId = escapePowerShellArg(sessionId);
-                                shellCommand = `Set-Location -Path ${escapedPath}; cursor-agent --resume=${escapedSessionId}`;
-                            } else {
-                                shellCommand = `Set-Location -Path ${escapedPath}; cursor-agent`;
-                            }
-                        } else {
-                            if (hasSession && sessionId) {
-                                // sessionId already validated by isValidSessionId
-                                const escapedSessionId = escapeShellArg(sessionId);
-                                shellCommand = `cd ${escapedPath} && cursor-agent --resume=${escapedSessionId}`;
-                            } else {
-                                shellCommand = `cd ${escapedPath} && cursor-agent`;
-                            }
-                        }
-                    } else {
-                        // Claude provider (default)
-                        // SEC-006: Validate initialCommand even in non-plain-shell mode
-                        let command = 'claude';
-                        if (initialCommand) {
-                            const cmdResult = validatePtyCommand(initialCommand);
-                            if (!cmdResult.valid) {
-                                console.warn(`[SECURITY] Rejected command in Claude mode: ${cmdResult.error}`);
-                                ws.send(JSON.stringify({
-                                    type: 'error',
-                                    message: cmdResult.error
-                                }));
-                                ws.close();
-                                return;
-                            }
-                            command = initialCommand;
-                        }
-
-                        if (isWindows) {
-                            if (hasSession && sessionId) {
-                                // sessionId already validated by isValidSessionId
-                                const escapedSessionId = escapePowerShellArg(sessionId);
-                                // Try to resume session, but with fallback to new session if it fails
-                                shellCommand = `Set-Location -Path ${escapedPath}; claude --resume ${escapedSessionId}; if ($LASTEXITCODE -ne 0) { claude }`;
-                            } else {
-                                shellCommand = `Set-Location -Path ${escapedPath}; ${command}`;
-                            }
-                        } else {
-                            if (hasSession && sessionId) {
-                                // sessionId already validated by isValidSessionId
-                                const escapedSessionId = escapeShellArg(sessionId);
-                                shellCommand = `cd ${escapedPath} && claude --resume ${escapedSessionId} || claude`;
-                            } else {
-                                shellCommand = `cd ${escapedPath} && ${command}`;
-                            }
-                        }
-                    }
-
-                    console.log('🔧 Executing shell command:', shellCommand);
-
-                    // Use appropriate shell based on platform
-                    const shell = os.platform() === 'win32' ? 'powershell.exe' : 'bash';
-                    const shellArgs = os.platform() === 'win32' ? ['-Command', shellCommand] : ['-c', shellCommand];
-
-                    // Use terminal dimensions from client if provided, otherwise use defaults
-                    const termCols = data.cols || 80;
-                    const termRows = data.rows || 24;
-                    console.log('📐 Using terminal dimensions:', termCols, 'x', termRows);
-
-                    shellProcess = pty.spawn(shell, shellArgs, {
-                        name: 'xterm-256color',
-                        cols: termCols,
-                        rows: termRows,
-                        cwd: os.homedir(),
-                        env: {
-                            ...process.env,
-                            TERM: 'xterm-256color',
-                            COLORTERM: 'truecolor',
-                            FORCE_COLOR: '3',
-                            // Override browser opening commands to echo URL for detection
-                            BROWSER: os.platform() === 'win32' ? 'echo "OPEN_URL:"' : 'echo "OPEN_URL:"'
-                        }
-                    });
-
-                    console.log('🟢 Shell process started with PTY, PID:', shellProcess.pid);
-
-                    // SEC-012: Create idle timeout handler
-                    const createIdleTimeout = () => {
-                        return setTimeout(() => {
-                            console.log(`[SECURITY] PTY session ${ptySessionKey} timed out after ${PTY_IDLE_TIMEOUT}ms of inactivity`);
-                            const session = ptySessionsMap.get(ptySessionKey);
-                            if (session) {
-                                if (session.ws && session.ws.readyState === WebSocket.OPEN) {
-                                    session.ws.send(JSON.stringify({
-                                        type: 'output',
-                                        data: `\r\n\x1b[33m[Session timed out due to inactivity]\x1b[0m\r\n`
-                                    }));
-                                }
-                                if (session.pty && session.pty.kill) {
-                                    session.pty.kill();
-                                }
-                                ptySessionsMap.delete(ptySessionKey);
-                            }
-                        }, PTY_IDLE_TIMEOUT);
-                    };
-
-                    // SEC-012: Reset idle timeout on activity
-                    const resetIdleTimeout = () => {
-                        const session = ptySessionsMap.get(ptySessionKey);
-                        if (session) {
-                            if (session.idleTimeoutId) {
-                                clearTimeout(session.idleTimeoutId);
-                            }
-                            session.idleTimeoutId = createIdleTimeout();
-                        }
-                    };
-
-                    ptySessionsMap.set(ptySessionKey, {
-                        pty: shellProcess,
-                        ws: ws,
-                        buffer: [],
-                        timeoutId: null,
-                        idleTimeoutId: createIdleTimeout(), // SEC-012: Start idle timeout
-                        projectPath,
-                        sessionId
-                    });
-
-                    // Handle data output
-                    shellProcess.onData((data) => {
-                        const session = ptySessionsMap.get(ptySessionKey);
-                        if (!session) return;
-
-                        if (session.buffer.length < 5000) {
-                            session.buffer.push(data);
-                        } else {
-                            session.buffer.shift();
-                            session.buffer.push(data);
-                        }
-
-                        if (session.ws && session.ws.readyState === WebSocket.OPEN) {
-                            let outputData = data;
-
-                            // Check for various URL opening patterns
-                            const patterns = [
-                                // Direct browser opening commands
-                                /(?:xdg-open|open|start)\s+(https?:\/\/[^\s\x1b\x07]+)/g,
-                                // BROWSER environment variable override
-                                /OPEN_URL:\s*(https?:\/\/[^\s\x1b\x07]+)/g,
-                                // Git and other tools opening URLs
-                                /Opening\s+(https?:\/\/[^\s\x1b\x07]+)/gi,
-                                // General URL patterns that might be opened
-                                /Visit:\s*(https?:\/\/[^\s\x1b\x07]+)/gi,
-                                /View at:\s*(https?:\/\/[^\s\x1b\x07]+)/gi,
-                                /Browse to:\s*(https?:\/\/[^\s\x1b\x07]+)/gi
-                            ];
-
-                            patterns.forEach(pattern => {
-                                let match;
-                                while ((match = pattern.exec(data)) !== null) {
-                                    const url = match[1];
-                                    console.log('[DEBUG] Detected URL for opening:', url);
-
-                                    // Send URL opening message to client
-                                    session.ws.send(JSON.stringify({
-                                        type: 'url_open',
-                                        url: url
-                                    }));
-
-                                    // Replace the OPEN_URL pattern with a user-friendly message
-                                    if (pattern.source.includes('OPEN_URL')) {
-                                        outputData = outputData.replace(match[0], `[INFO] Opening in browser: ${url}`);
-                                    }
-                                }
-                            });
-
-                            // Send regular output
-                            session.ws.send(JSON.stringify({
-                                type: 'output',
-                                data: outputData
-                            }));
-                        }
-                    });
-
-                    // Handle process exit
-                    shellProcess.onExit((exitCode) => {
-                        console.log('🔚 Shell process exited with code:', exitCode.exitCode, 'signal:', exitCode.signal);
-                        const session = ptySessionsMap.get(ptySessionKey);
-                        if (session && session.ws && session.ws.readyState === WebSocket.OPEN) {
-                            session.ws.send(JSON.stringify({
-                                type: 'output',
-                                data: `\r\n\x1b[33mProcess exited with code ${exitCode.exitCode}${exitCode.signal ? ` (${exitCode.signal})` : ''}\x1b[0m\r\n`
-                            }));
-                        }
-                        if (session) {
-                            if (session.timeoutId) clearTimeout(session.timeoutId);
-                            if (session.idleTimeoutId) clearTimeout(session.idleTimeoutId); // SEC-012
-                        }
-                        ptySessionsMap.delete(ptySessionKey);
-                        shellProcess = null;
-                    });
-
-                } catch (spawnError) {
-                    console.error('[ERROR] Error spawning process:', spawnError);
-                    ws.send(JSON.stringify({
-                        type: 'output',
-                        data: `\r\n\x1b[31mError: ${spawnError.message}\x1b[0m\r\n`
-                    }));
-                }
-
-            } else if (data.type === 'input') {
-                // SEC-012: Reset idle timeout on user input
-                const session = ptySessionsMap.get(ptySessionKey);
-                if (session && session.idleTimeoutId) {
-                    clearTimeout(session.idleTimeoutId);
-                    session.idleTimeoutId = setTimeout(() => {
-                        console.log(`[SECURITY] PTY session ${ptySessionKey} timed out after ${PTY_IDLE_TIMEOUT}ms of inactivity`);
-                        if (session.ws && session.ws.readyState === WebSocket.OPEN) {
-                            session.ws.send(JSON.stringify({
-                                type: 'output',
-                                data: `\r\n\x1b[33m[Session timed out due to inactivity]\x1b[0m\r\n`
-                            }));
-                        }
-                        if (session.pty && session.pty.kill) {
-                            session.pty.kill();
-                        }
-                        ptySessionsMap.delete(ptySessionKey);
-                    }, PTY_IDLE_TIMEOUT);
-                }
-
-                // Send input to shell process
-                if (shellProcess && shellProcess.write) {
-                    try {
-                        shellProcess.write(data.data);
-                    } catch (error) {
-                        console.error('Error writing to shell:', error);
-                    }
-                } else {
-                    console.warn('No active shell process to send input to');
-                }
-            } else if (data.type === 'resize') {
-                // Handle terminal resize
-                if (shellProcess && shellProcess.resize) {
-                    console.log('Terminal resize requested:', data.cols, 'x', data.rows);
-                    shellProcess.resize(data.cols, data.rows);
-                }
-            }
-        } catch (error) {
-            console.error('[ERROR] Shell WebSocket error:', error.message);
-            if (ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({
-                    type: 'output',
-                    data: `\r\n\x1b[31mError: ${error.message}\x1b[0m\r\n`
-                }));
-            }
-        }
-    });
-
-    ws.on('close', () => {
-        console.log('🔌 Shell client disconnected');
-
-        if (ptySessionKey) {
-            const session = ptySessionsMap.get(ptySessionKey);
-            if (session) {
-                console.log('⏳ PTY session kept alive, will timeout in 30 minutes:', ptySessionKey);
-                session.ws = null;
-
-                session.timeoutId = setTimeout(() => {
-                    console.log('⏰ PTY session timeout, killing process:', ptySessionKey);
-                    if (session.pty && session.pty.kill) {
-                        session.pty.kill();
-                    }
-                    ptySessionsMap.delete(ptySessionKey);
-                }, PTY_SESSION_TIMEOUT);
-            }
-        }
-    });
-
-    ws.on('error', (error) => {
-        console.error('[ERROR] Shell WebSocket error:', error);
-    });
-}
-// Audio transcription endpoint
-app.post('/api/transcribe', authenticateToken, async (req, res) => {
-    try {
-        const multer = (await import('multer')).default;
-        const upload = multer({ storage: multer.memoryStorage() });
-
-        // Handle multipart form data
-        upload.single('audio')(req, res, async (err) => {
-            if (err) {
-                return res.status(400).json({ error: 'Failed to process audio file' });
-            }
-
-            if (!req.file) {
-                return res.status(400).json({ error: 'No audio file provided' });
-            }
-
-            const apiKey = process.env.OPENAI_API_KEY;
-            if (!apiKey) {
-                return res.status(500).json({ error: 'OpenAI API key not configured. Please set OPENAI_API_KEY in server environment.' });
-            }
-
-            try {
-                // Create form data for OpenAI
-                const FormData = (await import('form-data')).default;
-                const formData = new FormData();
-                formData.append('file', req.file.buffer, {
-                    filename: req.file.originalname,
-                    contentType: req.file.mimetype
-                });
-                formData.append('model', 'whisper-1');
-                formData.append('response_format', 'json');
-                formData.append('language', 'en');
-
-                // Make request to OpenAI
-                const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${apiKey}`,
-                        ...formData.getHeaders()
-                    },
-                    body: formData
-                });
-
-                if (!response.ok) {
-                    const errorData = await response.json().catch(() => ({}));
-                    throw new Error(errorData.error?.message || `Whisper API error: ${response.status}`);
-                }
-
-                const data = await response.json();
-                let transcribedText = data.text || '';
-
-                // Check if enhancement mode is enabled
-                const mode = req.body.mode || 'default';
-
-                // If no transcribed text, return empty
-                if (!transcribedText) {
-                    return res.json({ text: '' });
-                }
-
-                // If default mode, return transcribed text without enhancement
-                if (mode === 'default') {
-                    return res.json({ text: transcribedText });
-                }
-
-                // Handle different enhancement modes
-                try {
-                    const OpenAI = (await import('openai')).default;
-                    const openai = new OpenAI({ apiKey });
-
-                    let prompt, systemMessage, temperature = 0.7, maxTokens = 800;
-
-                    switch (mode) {
-                        case 'prompt':
-                            systemMessage = 'You are an expert prompt engineer who creates clear, detailed, and effective prompts.';
-                            prompt = `You are an expert prompt engineer. Transform the following rough instruction into a clear, detailed, and context-aware AI prompt.
-
-Your enhanced prompt should:
-1. Be specific and unambiguous
-2. Include relevant context and constraints
-3. Specify the desired output format
-4. Use clear, actionable language
-5. Include examples where helpful
-6. Consider edge cases and potential ambiguities
-
-Transform this rough instruction into a well-crafted prompt:
-"${transcribedText}"
-
-Enhanced prompt:`;
-                            break;
-
-                        case 'vibe':
-                        case 'instructions':
-                        case 'architect':
-                            systemMessage = 'You are a helpful assistant that formats ideas into clear, actionable instructions for AI agents.';
-                            temperature = 0.5; // Lower temperature for more controlled output
-                            prompt = `Transform the following idea into clear, well-structured instructions that an AI agent can easily understand and execute.
-
-IMPORTANT RULES:
-- Format as clear, step-by-step instructions
-- Add reasonable implementation details based on common patterns
-- Only include details directly related to what was asked
-- Do NOT add features or functionality not mentioned
-- Keep the original intent and scope intact
-- Use clear, actionable language an agent can follow
-
-Transform this idea into agent-friendly instructions:
-"${transcribedText}"
-
-Agent instructions:`;
-                            break;
-
-                        default:
-                            // No enhancement needed
-                            break;
-                    }
-
-                    // Only make GPT call if we have a prompt
-                    if (prompt) {
-                        const completion = await openai.chat.completions.create({
-                            model: 'gpt-4o-mini',
-                            messages: [
-                                { role: 'system', content: systemMessage },
-                                { role: 'user', content: prompt }
-                            ],
-                            temperature: temperature,
-                            max_tokens: maxTokens
-                        });
-
-                        transcribedText = completion.choices[0].message.content || transcribedText;
-                    }
-
-                } catch (gptError) {
-                    console.error('GPT processing error:', gptError);
-                    // Fall back to original transcription if GPT fails
-                }
-
-                res.json({ text: transcribedText });
-
-            } catch (error) {
-                console.error('Transcription error:', error);
-                res.status(500).json({ error: error.message });
-            }
-        });
-    } catch (error) {
-        console.error('Endpoint error:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-});
-
-// Image upload endpoint
-app.post('/api/projects/:projectName/upload-images', authenticateToken, async (req, res) => {
-    try {
-        const multer = (await import('multer')).default;
-        const path = (await import('path')).default;
-        const fs = (await import('fs')).promises;
-        const os = (await import('os')).default;
-
-        // Configure multer for image uploads
-        const storage = multer.diskStorage({
-            destination: async (req, file, cb) => {
-                const uploadDir = path.join(os.tmpdir(), 'claude-ui-uploads', String(req.user.id));
-                await fs.mkdir(uploadDir, { recursive: true });
-                cb(null, uploadDir);
-            },
-            filename: (req, file, cb) => {
-                const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-                const sanitizedName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
-                cb(null, uniqueSuffix + '-' + sanitizedName);
-            }
-        });
-
-        const fileFilter = (req, file, cb) => {
-            const allowedMimes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml'];
-            if (allowedMimes.includes(file.mimetype)) {
-                cb(null, true);
-            } else {
-                cb(new Error('Invalid file type. Only JPEG, PNG, GIF, WebP, and SVG are allowed.'));
-            }
-        };
-
-        const upload = multer({
-            storage,
-            fileFilter,
-            limits: {
-                fileSize: 5 * 1024 * 1024, // 5MB
-                files: 5
-            }
-        });
-
-        // Handle multipart form data
-        upload.array('images', 5)(req, res, async (err) => {
-            if (err) {
-                return res.status(400).json({ error: err.message });
-            }
-
-            if (!req.files || req.files.length === 0) {
-                return res.status(400).json({ error: 'No image files provided' });
-            }
-
-            try {
-                // Process uploaded images
-                const processedImages = await Promise.all(
-                    req.files.map(async (file) => {
-                        // Read file and convert to base64
-                        const buffer = await fs.readFile(file.path);
-                        const base64 = buffer.toString('base64');
-                        const mimeType = file.mimetype;
-
-                        // Clean up temp file immediately
-                        await fs.unlink(file.path);
-
-                        return {
-                            name: file.originalname,
-                            data: `data:${mimeType};base64,${base64}`,
-                            size: file.size,
-                            mimeType: mimeType
-                        };
-                    })
-                );
-
-                res.json({ images: processedImages });
-            } catch (error) {
-                console.error('Error processing images:', error);
-                // Clean up any remaining files
-                await Promise.all(req.files.map(f => fs.unlink(f.path).catch(() => { })));
-                res.status(500).json({ error: 'Failed to process images' });
-            }
-        });
-    } catch (error) {
-        console.error('Error in image upload endpoint:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-});
-
-// Get token usage for a specific session
-app.get('/api/projects/:projectName/sessions/:sessionId/token-usage', authenticateToken, async (req, res) => {
-  try {
-    const { projectName, sessionId } = req.params;
-    const { provider = 'claude' } = req.query;
-    const homeDir = os.homedir();
-
-    // Allow only safe characters in sessionId
-    const safeSessionId = String(sessionId).replace(/[^a-zA-Z0-9._-]/g, '');
-    if (!safeSessionId) {
-      return res.status(400).json({ error: 'Invalid sessionId' });
-    }
-
-    // Handle Cursor sessions - they use SQLite and don't have token usage info
-    if (provider === 'cursor') {
-      return res.json({
-        used: 0,
-        total: 0,
-        breakdown: { input: 0, cacheCreation: 0, cacheRead: 0 },
-        unsupported: true,
-        message: 'Token usage tracking not available for Cursor sessions'
-      });
-    }
-
-    // Handle Codex sessions
-    if (provider === 'codex') {
-      const codexSessionsDir = path.join(homeDir, '.codex', 'sessions');
-
-      // Find the session file by searching for the session ID
-      const findSessionFile = async (dir) => {
-        try {
-          const entries = await fsPromises.readdir(dir, { withFileTypes: true });
-          for (const entry of entries) {
-            const fullPath = path.join(dir, entry.name);
-            if (entry.isDirectory()) {
-              const found = await findSessionFile(fullPath);
-              if (found) return found;
-            } else if (entry.name.includes(safeSessionId) && entry.name.endsWith('.jsonl')) {
-              return fullPath;
-            }
-          }
-        } catch (error) {
-          // Skip directories we can't read
-        }
-        return null;
-      };
-
-      const sessionFilePath = await findSessionFile(codexSessionsDir);
-
-      if (!sessionFilePath) {
-        return res.status(404).json({ error: 'Codex session file not found', sessionId: safeSessionId });
-      }
-
-      // Read and parse the Codex JSONL file
-      let fileContent;
-      try {
-        fileContent = await fsPromises.readFile(sessionFilePath, 'utf8');
-      } catch (error) {
-        if (error.code === 'ENOENT') {
-          return res.status(404).json({ error: 'Session file not found', path: sessionFilePath });
-        }
-        throw error;
-      }
-      const lines = fileContent.trim().split('\n');
-      let totalTokens = 0;
-      let contextWindow = 200000; // Default for Codex/OpenAI
-
-      // Find the latest token_count event with info (scan from end)
-      for (let i = lines.length - 1; i >= 0; i--) {
-        try {
-          const entry = JSON.parse(lines[i]);
-
-          // Codex stores token info in event_msg with type: "token_count"
-          // Use last_token_usage.input_tokens for context window utilization,
-          // not total_token_usage which is cumulative billing across all turns.
-          if (entry.type === 'event_msg' && entry.payload?.type === 'token_count' && entry.payload?.info) {
-            const tokenInfo = entry.payload.info;
-            if (tokenInfo.last_token_usage) {
-              totalTokens = tokenInfo.last_token_usage.input_tokens || 0;
-            } else if (tokenInfo.total_token_usage) {
-              totalTokens = tokenInfo.total_token_usage.input_tokens || 0;
-            }
-            if (tokenInfo.model_context_window) {
-              contextWindow = tokenInfo.model_context_window;
-            }
-            break; // Stop after finding the latest token count
-          }
-        } catch (parseError) {
-          // Skip lines that can't be parsed
-          continue;
-        }
-      }
-
-      return res.json({
-        used: totalTokens,
-        total: contextWindow
-      });
-    }
-
-    // Handle Claude sessions (default)
-    // Extract actual project path
-    let projectPath;
-    try {
-      projectPath = await extractProjectDirectory(projectName);
-    } catch (error) {
-      console.error('Error extracting project directory:', error);
-      return res.status(500).json({ error: 'Failed to determine project path' });
-    }
-
-    // Construct the JSONL file path
-    // Claude stores session files in ~/.claude/projects/[encoded-project-path]/[session-id].jsonl
-    // The encoding replaces /, spaces, ~, and _ with -
-    const encodedPath = projectPath.replace(/[\\/:\s~_]/g, '-');
-    const projectDir = path.join(homeDir, '.claude', 'projects', encodedPath);
-
-    const jsonlPath = path.join(projectDir, `${safeSessionId}.jsonl`);
-
-    // Constrain to projectDir
-    const rel = path.relative(path.resolve(projectDir), path.resolve(jsonlPath));
-    if (rel.startsWith('..') || path.isAbsolute(rel)) {
-      return res.status(400).json({ error: 'Invalid path' });
-    }
-
-    // Read and parse the JSONL file
-    let fileContent;
-    try {
-      fileContent = await fsPromises.readFile(jsonlPath, 'utf8');
-    } catch (error) {
-      if (error.code === 'ENOENT') {
-        return res.status(404).json({ error: 'Session file not found', path: jsonlPath });
-      }
-      throw error; // Re-throw other errors to be caught by outer try-catch
-    }
-    const lines = fileContent.trim().split('\n');
-
-    const parsedContextWindow = parseInt(process.env.CONTEXT_WINDOW, 10);
-    const contextWindow = Number.isFinite(parsedContextWindow) ? parsedContextWindow : 160000;
-    let inputTokens = 0;
-    let cacheCreationTokens = 0;
-    let cacheReadTokens = 0;
-
-    // Find the latest assistant message with usage data (scan from end)
-    for (let i = lines.length - 1; i >= 0; i--) {
-      try {
-        const entry = JSON.parse(lines[i]);
-
-        // Only count assistant messages which have usage data
-        if (entry.type === 'assistant' && entry.message?.usage) {
-          const usage = entry.message.usage;
-
-          // Use token counts from latest assistant message only
-          inputTokens = usage.input_tokens || 0;
-          cacheCreationTokens = usage.cache_creation_input_tokens || 0;
-          cacheReadTokens = usage.cache_read_input_tokens || 0;
-
-          break; // Stop after finding the latest assistant message
-        }
-      } catch (parseError) {
-        // Skip lines that can't be parsed
-        continue;
-      }
-    }
-
-    // Calculate total context usage (excluding output_tokens, as per ccusage)
-    const totalUsed = inputTokens + cacheCreationTokens + cacheReadTokens;
-
-    res.json({
-      used: totalUsed,
-      total: contextWindow,
-      breakdown: {
-        input: inputTokens,
-        cacheCreation: cacheCreationTokens,
-        cacheRead: cacheReadTokens
-      }
-    });
-  } catch (error) {
-    console.error('Error reading session token usage:', error);
-    res.status(500).json({ error: 'Failed to read session token usage' });
-  }
 });
 
 // Serve React app for all other routes (excluding static files)
@@ -2186,89 +582,8 @@ app.get('*', (req, res) => {
 // SEC-010: Error sanitization middleware (must be after all routes)
 app.use(errorSanitizer);
 
-// Helper function to convert permissions to rwx format
-function permToRwx(perm) {
-    const r = perm & 4 ? 'r' : '-';
-    const w = perm & 2 ? 'w' : '-';
-    const x = perm & 1 ? 'x' : '-';
-    return r + w + x;
-}
-
-async function getFileTree(dirPath, maxDepth = 3, currentDepth = 0, showHidden = true) {
-    // Using fsPromises from import
-    const items = [];
-
-    try {
-        const entries = await fsPromises.readdir(dirPath, { withFileTypes: true });
-
-        for (const entry of entries) {
-            // Debug: log all entries including hidden files
-
-
-            // Skip heavy build directories and VCS directories
-            if (entry.name === 'node_modules' ||
-                entry.name === 'dist' ||
-                entry.name === 'build' ||
-                entry.name === '.git' ||
-                entry.name === '.svn' ||
-                entry.name === '.hg') continue;
-
-            const itemPath = path.join(dirPath, entry.name);
-            const item = {
-                name: entry.name,
-                path: itemPath,
-                type: entry.isDirectory() ? 'directory' : 'file'
-            };
-
-            // Get file stats for additional metadata
-            try {
-                const stats = await fsPromises.stat(itemPath);
-                item.size = stats.size;
-                item.modified = stats.mtime.toISOString();
-
-                // Convert permissions to rwx format
-                const mode = stats.mode;
-                const ownerPerm = (mode >> 6) & 7;
-                const groupPerm = (mode >> 3) & 7;
-                const otherPerm = mode & 7;
-                item.permissions = ((mode >> 6) & 7).toString() + ((mode >> 3) & 7).toString() + (mode & 7).toString();
-                item.permissionsRwx = permToRwx(ownerPerm) + permToRwx(groupPerm) + permToRwx(otherPerm);
-            } catch (statError) {
-                // If stat fails, provide default values
-                item.size = 0;
-                item.modified = null;
-                item.permissions = '000';
-                item.permissionsRwx = '---------';
-            }
-
-            if (entry.isDirectory() && currentDepth < maxDepth) {
-                // Recursively get subdirectories but limit depth
-                try {
-                    // Check if we can access the directory before trying to read it
-                    await fsPromises.access(item.path, fs.constants.R_OK);
-                    item.children = await getFileTree(item.path, maxDepth, currentDepth + 1, showHidden);
-                } catch (e) {
-                    // Silently skip directories we can't access (permission denied, etc.)
-                    item.children = [];
-                }
-            }
-
-            items.push(item);
-        }
-    } catch (error) {
-        // Only log non-permission errors to avoid spam
-        if (error.code !== 'EACCES' && error.code !== 'EPERM') {
-            console.error('Error reading directory:', error);
-        }
-    }
-
-    return items.sort((a, b) => {
-        if (a.type !== b.type) {
-            return a.type === 'directory' ? -1 : 1;
-        }
-        return a.name.localeCompare(b.name);
-    });
-}
+// Setup WebSocket routing (chat + shell handlers)
+setupWebSocketRouting(wss);
 
 const PORT = process.env.PORT || 3001;
 
@@ -2296,10 +611,10 @@ async function startServer() {
         // SEC-004: Warn if binding to all interfaces
         if (BIND_HOST === '0.0.0.0') {
             console.warn('');
-            console.warn(c.warn('═'.repeat(70)));
+            console.warn(c.warn('\u2550'.repeat(70)));
             console.warn(`${c.warn('[SECURITY]')} Server binding to 0.0.0.0 (all interfaces)`);
             console.warn(`${c.warn('[SECURITY]')} This exposes the server to the network. Use a reverse proxy in production.`);
-            console.warn(c.warn('═'.repeat(70)));
+            console.warn(c.warn('\u2550'.repeat(70)));
             console.warn('');
         }
 
@@ -2307,9 +622,9 @@ async function startServer() {
             const appInstallPath = path.join(__dirname, '..');
 
             console.log('');
-            console.log(c.dim('═'.repeat(63)));
+            console.log(c.dim('\u2550'.repeat(63)));
             console.log(`  ${c.bright('Claude Code UI Server - Ready')}`);
-            console.log(c.dim('═'.repeat(63)));
+            console.log(c.dim('\u2550'.repeat(63)));
             console.log('');
             console.log(`${c.info('[INFO]')} Server URL:  ${c.bright(`http://${BIND_HOST}:${PORT}`)}`);
             console.log(`${c.info('[INFO]')} Installed at: ${c.dim(appInstallPath)}`);
@@ -2324,5 +639,108 @@ async function startServer() {
         process.exit(1);
     }
 }
+
+// ─── Graceful Shutdown ───────────────────────────────────────────────────────
+let shutdownInProgress = false;
+
+async function gracefulShutdown(signal) {
+    if (shutdownInProgress) return;
+    shutdownInProgress = true;
+
+    console.log(`\n[SHUTDOWN] Received ${signal}, starting graceful shutdown...`);
+
+    // 1. Stop accepting new connections
+    server.close(() => {
+        console.log('[SHUTDOWN] HTTP server closed');
+    });
+
+    // 2. Close all WebSocket connections
+    wss.clients.forEach(client => {
+        try {
+            client.close(1001, 'Server shutting down');
+        } catch (e) {
+            // Ignore errors during shutdown
+        }
+    });
+    console.log('[SHUTDOWN] WebSocket connections closed');
+
+    // 3. Kill all PTY sessions
+    try {
+        const { ptySessionsMap } = await import('./ws/shellHandler.js');
+        for (const [key, session] of ptySessionsMap) {
+            try {
+                if (session.timeoutId) clearTimeout(session.timeoutId);
+                if (session.idleTimeoutId) clearTimeout(session.idleTimeoutId);
+                if (session.pty && session.pty.kill) session.pty.kill();
+            } catch (e) {
+                // Ignore errors during shutdown
+            }
+        }
+        ptySessionsMap.clear();
+    } catch (e) { /* ignore */ }
+    console.log('[SHUTDOWN] PTY sessions cleaned up');
+
+    // 4. Abort all active SDK sessions
+    try {
+        const { getActiveClaudeSDKSessions, abortClaudeSDKSession } = await import('./claude-sdk.js');
+        const activeClaude = getActiveClaudeSDKSessions();
+        for (const sessionId of activeClaude) {
+            await abortClaudeSDKSession(sessionId).catch(() => {});
+        }
+    } catch (e) { /* ignore */ }
+
+    try {
+        const { getActiveCursorSessions, abortCursorSession } = await import('./cursor-cli.js');
+        const activeCursor = getActiveCursorSessions();
+        for (const sessionId of activeCursor) {
+            abortCursorSession(sessionId);
+        }
+    } catch (e) { /* ignore */ }
+
+    try {
+        const { getActiveCodexSessions, abortCodexSession } = await import('./openai-codex.js');
+        const activeCodex = getActiveCodexSessions();
+        for (const session of activeCodex) {
+            abortCodexSession(session.id);
+        }
+    } catch (e) { /* ignore */ }
+    console.log('[SHUTDOWN] Active sessions aborted');
+
+    // 5. Close file watcher
+    try {
+        await closeProjectWatcher();
+    } catch (e) { /* ignore */ }
+
+    // 6. Close database
+    try {
+        const { closeDatabase } = await import('./database/db.js');
+        if (typeof closeDatabase === 'function') {
+            closeDatabase();
+        }
+    } catch (e) { /* ignore */ }
+
+    // 7. Clean up Codex session cleanup interval
+    try {
+        const { cleanupCodexSessions } = await import('./openai-codex.js');
+        if (typeof cleanupCodexSessions === 'function') {
+            cleanupCodexSessions();
+        }
+    } catch (e) { /* ignore */ }
+
+    console.log('[SHUTDOWN] Cleanup complete, exiting...');
+    process.exit(0);
+}
+
+// Register signal handlers
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('uncaughtException', (err) => {
+    console.error('[FATAL] Uncaught exception:', err);
+    gracefulShutdown('uncaughtException');
+});
+process.on('unhandledRejection', (reason) => {
+    console.error('[FATAL] Unhandled rejection:', reason);
+    gracefulShutdown('unhandledRejection');
+});
 
 startServer();

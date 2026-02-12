@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
 import { ScrollArea } from './ui/scroll-area';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Folder, FolderOpen, File, FileText, FileCode, List, TableProperties, Eye, Search, X } from 'lucide-react';
 import { cn } from '../lib/utils';
-import CodeEditor from './CodeEditor';
+const CodeEditor = React.lazy(() => import('./CodeEditor'));
 import ImageViewer from './ImageViewer';
 import { api } from '../utils/api';
 
@@ -459,11 +459,20 @@ function FileTree({ selectedProject }) {
       
       {/* Code Editor Modal */}
       {selectedFile && (
-        <CodeEditor
-          file={selectedFile}
-          onClose={() => setSelectedFile(null)}
-          projectPath={selectedFile.projectPath}
-        />
+        <Suspense fallback={
+          <div className="fixed inset-0 z-40 flex items-center justify-center bg-background/80">
+            <div className="flex items-center gap-3">
+              <div className="w-6 h-6 rounded-full border-2 border-gray-200 border-t-blue-500 animate-spin" />
+              <span className="text-gray-500 dark:text-gray-400 text-sm">Loading editor...</span>
+            </div>
+          </div>
+        }>
+          <CodeEditor
+            file={selectedFile}
+            onClose={() => setSelectedFile(null)}
+            projectPath={selectedFile.projectPath}
+          />
+        </Suspense>
       )}
       
       {/* Image Viewer Modal */}

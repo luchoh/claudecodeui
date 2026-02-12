@@ -32,6 +32,7 @@ import { AuthProvider } from './contexts/AuthContext';
 import { TaskMasterProvider } from './contexts/TaskMasterContext';
 import { TasksSettingsProvider } from './contexts/TasksSettingsContext';
 import { WebSocketProvider, useWebSocket } from './contexts/WebSocketContext';
+import { ChatProvider } from './contexts/ChatContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import { useVersionCheck } from './hooks/useVersionCheck';
 import useLocalStorage from './hooks/useLocalStorage';
@@ -910,19 +911,7 @@ function AppContent() {
 
       {/* Main Content Area - Flexible */}
       <div className={`flex-1 flex flex-col min-w-0 ${isMobile && !isInputFocused ? 'pb-mobile-nav' : ''}`}>
-        <MainContent
-          selectedProject={selectedProject}
-          selectedSession={selectedSession}
-          activeTab={activeTab}
-          setActiveTab={setActiveTab}
-          ws={ws}
-          sendMessage={sendMessage}
-          latestMessage={latestMessage}
-          isMobile={isMobile}
-          isPWA={isPWA}
-          onMenuClick={() => setSidebarOpen(true)}
-          isLoading={isLoadingProjects}
-          onInputFocusChange={setIsInputFocused}
+        <ChatProvider
           onSessionActive={markSessionAsActive}
           onSessionInactive={markSessionAsInactive}
           onSessionProcessing={markSessionAsProcessing}
@@ -937,7 +926,22 @@ function AppContent() {
           autoScrollToBottom={autoScrollToBottom}
           sendByCtrlEnter={sendByCtrlEnter}
           externalMessageUpdate={externalMessageUpdate}
-        />
+        >
+          <MainContent
+            selectedProject={selectedProject}
+            selectedSession={selectedSession}
+            activeTab={activeTab}
+            setActiveTab={setActiveTab}
+            ws={ws}
+            sendMessage={sendMessage}
+            latestMessage={latestMessage}
+            isMobile={isMobile}
+            isPWA={isPWA}
+            onMenuClick={() => setSidebarOpen(true)}
+            isLoading={isLoadingProjects}
+            onInputFocusChange={setIsInputFocused}
+          />
+        </ChatProvider>
       </div>
 
       {/* Mobile Bottom Navigation */}

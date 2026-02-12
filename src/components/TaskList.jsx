@@ -1,10 +1,10 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, Suspense } from 'react';
 import { Search, Filter, ArrowUpDown, ArrowUp, ArrowDown, List, Grid, ChevronDown, Columns, Plus, Settings, Terminal, FileText, HelpCircle, X } from 'lucide-react';
 import { cn } from '../lib/utils';
 import TaskCard from './TaskCard';
 import CreateTaskModal from './CreateTaskModal';
 import { useTaskMaster } from '../contexts/TaskMasterContext';
-import Shell from './Shell';
+const Shell = React.lazy(() => import('./Shell'));
 import { api } from '../utils/api';
 
 const TaskList = ({ 
@@ -425,8 +425,8 @@ const TaskList = ({
               
               {/* Terminal Container */}
               <div className="flex-1 p-4">
-                <div 
-                  className="h-full bg-black rounded-lg overflow-hidden" 
+                <div
+                  className="h-full bg-black rounded-lg overflow-hidden"
                   onClick={(e) => {
                     // Focus the terminal when clicked
                     const terminalElement = e.currentTarget.querySelector('.xterm-screen');
@@ -435,25 +435,34 @@ const TaskList = ({
                     }
                   }}
                 >
-                  <Shell 
-                    selectedProject={currentProject}
-                    selectedSession={null}
-                    isActive={true}
-                    initialCommand="npx task-master init"
-                    isPlainShell={true}
-                    onProcessComplete={(exitCode) => {
-                      setIsTaskMasterComplete(true);
-                      if (exitCode === 0) {
-                        // Auto-refresh after successful completion
-                        setTimeout(() => {
-                          refreshProjects();
-                          if (currentProject) {
-                            setCurrentProject(currentProject);
-                          }
-                        }, 1000);
-                      }
-                    }}
-                  />
+                  <Suspense fallback={
+                    <div className="h-full flex items-center justify-center bg-black">
+                      <div className="flex items-center gap-3">
+                        <div className="w-6 h-6 rounded-full border-2 border-gray-600 border-t-green-500 animate-spin" />
+                        <span className="text-gray-400 text-sm">Loading terminal...</span>
+                      </div>
+                    </div>
+                  }>
+                    <Shell
+                      selectedProject={currentProject}
+                      selectedSession={null}
+                      isActive={true}
+                      initialCommand="npx task-master init"
+                      isPlainShell={true}
+                      onProcessComplete={(exitCode) => {
+                        setIsTaskMasterComplete(true);
+                        if (exitCode === 0) {
+                          // Auto-refresh after successful completion
+                          setTimeout(() => {
+                            refreshProjects();
+                            if (currentProject) {
+                              setCurrentProject(currentProject);
+                            }
+                          }, 1000);
+                        }
+                      }}
+                    />
+                  </Suspense>
                 </div>
               </div>
               

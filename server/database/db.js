@@ -112,6 +112,21 @@ const runMigrations = () => {
       `);
     }
 
+    // Add api_key_prefix column and hash existing plaintext API keys
+    const apiKeysTableInfo = db.prepare("PRAGMA table_info(api_keys)").all();
+    const apiKeysColumns = apiKeysTableInfo.map(col => col.name);
+    if (!apiKeysColumns.includes('api_key_prefix')) {
+      console.log('Running migration: Adding api_key_prefix column to api_keys');
+      db.exec('ALTER TABLE api_keys ADD COLUMN api_key_prefix TEXT');
+      // Backfill existing keys: store first 7 chars as prefix, then hash the key
+      const existingKeys = db.prepare('SELECT id, api_key FROM api_keys WHERE api_key_prefix IS NULL').all();
+      for (const key of existingKeys) {
+        const prefix = key.api_key.substring(0, 7);
+        const hash = crypto.createHash('sha256').update(key.api_key).digest('hex');
+        db.prepare('UPDATE api_keys SET api_key_prefix = ?, api_key = ? WHERE id = ?').run(prefix, hash, key.id);
+      }
+    }
+
     console.log('Database migrations completed successfully');
   } catch (error) {
     console.error('Error running migrations:', error.message);
@@ -120,7 +135,7 @@ const runMigrations = () => {
 };
 
 // Cleanup expired tickets and tokens periodically (every 60 seconds)
-setInterval(() => {
+const dbCleanupInterval = setInterval(() => {
   try {
     const now = Math.floor(Date.now() / 1000);
     db.prepare('DELETE FROM auth_tickets WHERE expires_at < ?').run(now);
@@ -265,37 +280,40 @@ const apiKeysDb = {
     return 'ck_' + crypto.randomBytes(32).toString('hex');
   },
 
-  // Create a new API key
+  // Create a new API key (stores hash, returns plaintext once)
   createApiKey: (userId, keyName) => {
     try {
       const apiKey = apiKeysDb.generateApiKey();
-      const stmt = db.prepare('INSERT INTO api_keys (user_id, key_name, api_key) VALUES (?, ?, ?)');
-      const result = stmt.run(userId, keyName, apiKey);
-      return { id: result.lastInsertRowid, keyName, apiKey };
+      const keyHash = crypto.createHash('sha256').update(apiKey).digest('hex');
+      const keyPrefix = apiKey.substring(0, 7); // e.g., "ck_abc1"
+      const stmt = db.prepare('INSERT INTO api_keys (user_id, key_name, api_key, api_key_prefix) VALUES (?, ?, ?, ?)');
+      const result = stmt.run(userId, keyName, keyHash, keyPrefix);
+      return { id: result.lastInsertRowid, keyName, apiKey, keyPrefix };
     } catch (err) {
       throw err;
     }
   },
 
-  // Get all API keys for a user
+  // Get all API keys for a user (returns prefix, not full key or hash)
   getApiKeys: (userId) => {
     try {
-      const rows = db.prepare('SELECT id, key_name, api_key, created_at, last_used, is_active FROM api_keys WHERE user_id = ? ORDER BY created_at DESC').all(userId);
+      const rows = db.prepare('SELECT id, key_name, api_key_prefix, api_key_prefix as api_key, created_at, last_used, is_active FROM api_keys WHERE user_id = ? ORDER BY created_at DESC').all(userId);
       return rows;
     } catch (err) {
       throw err;
     }
   },
 
-  // Validate API key and get user
+  // Validate API key and get user (compares hashes)
   validateApiKey: (apiKey) => {
     try {
+      const keyHash = crypto.createHash('sha256').update(apiKey).digest('hex');
       const row = db.prepare(`
         SELECT u.id, u.username, ak.id as api_key_id
         FROM api_keys ak
         JOIN users u ON ak.user_id = u.id
         WHERE ak.api_key = ? AND ak.is_active = 1 AND u.is_active = 1
-      `).get(apiKey);
+      `).get(keyHash);
 
       if (row) {
         // Update last_used timestamp
@@ -514,6 +532,19 @@ const githubTokensDb = {
   }
 };
 
+// Graceful shutdown: stop cleanup interval and close database connection
+function closeDatabase() {
+  if (dbCleanupInterval) {
+    clearInterval(dbCleanupInterval);
+  }
+  try {
+    db.close();
+    console.log('[SHUTDOWN] Database closed');
+  } catch (e) {
+    // Ignore close errors during shutdown
+  }
+}
+
 export {
   db,
   initializeDatabase,
@@ -522,5 +553,6 @@ export {
   credentialsDb,
   githubTokensDb, // Backward compatibility
   refreshTokensDb,
-  ticketsDb
+  ticketsDb,
+  closeDatabase
 };

@@ -1,9 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, Suspense } from 'react';
 import { ArrowRight, List, Clock, Flag, CheckCircle, Circle, AlertCircle, Pause, ChevronDown, ChevronUp, Plus, FileText, Settings, X, Terminal, Eye, Play, Zap, Target } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useTaskMaster } from '../contexts/TaskMasterContext';
 import { api } from '../utils/api';
-import Shell from './Shell';
+const Shell = React.lazy(() => import('./Shell'));
 import TaskDetail from './TaskDetail';
 
 const NextTaskBanner = ({ onShowAllTasks, onStartTask, className = '' }) => {
@@ -292,13 +292,22 @@ const NextTaskBanner = ({ onShowAllTasks, onStartTask, className = '' }) => {
             {/* Terminal Container */}
             <div className="flex-1 p-4">
               <div className="h-full bg-black rounded-lg overflow-hidden">
-                <Shell 
-                  selectedProject={currentProject}
-                  selectedSession={null}
-                  isActive={true}
-                  initialCommand="npx task-master init"
-                  isPlainShell={true}
-                />
+                <Suspense fallback={
+                  <div className="h-full flex items-center justify-center bg-black">
+                    <div className="flex items-center gap-3">
+                      <div className="w-6 h-6 rounded-full border-2 border-gray-600 border-t-green-500 animate-spin" />
+                      <span className="text-gray-400 text-sm">Loading terminal...</span>
+                    </div>
+                  </div>
+                }>
+                  <Shell
+                    selectedProject={currentProject}
+                    selectedSession={null}
+                    isActive={true}
+                    initialCommand="npx task-master init"
+                    isPlainShell={true}
+                  />
+                </Suspense>
               </div>
             </div>
             

@@ -71,9 +71,11 @@ export default defineConfig(({ command, mode }) => {
               '@codemirror/lang-json',
               '@codemirror/lang-markdown',
               '@codemirror/lang-python',
-              '@codemirror/theme-one-dark'
+              '@codemirror/theme-one-dark',
+              '@codemirror/view',
+              '@codemirror/merge'
             ],
-            'vendor-xterm': ['@xterm/xterm', '@xterm/addon-fit', '@xterm/addon-clipboard', '@xterm/addon-webgl']
+            'vendor-xterm': ['@xterm/xterm', '@xterm/addon-fit', '@xterm/addon-clipboard', '@xterm/addon-webgl', '@xterm/addon-web-links']
           }
         }
       }

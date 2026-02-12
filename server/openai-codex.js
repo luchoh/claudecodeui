@@ -375,7 +375,7 @@ function sendMessage(ws, data) {
 }
 
 // Clean up old completed sessions periodically
-setInterval(() => {
+const codexCleanupInterval = setInterval(() => {
   const now = Date.now();
   const maxAge = 30 * 60 * 1000; // 30 minutes
 
@@ -388,3 +388,21 @@ setInterval(() => {
     }
   }
 }, 5 * 60 * 1000); // Every 5 minutes
+
+/**
+ * Graceful shutdown: clear cleanup interval and abort all active sessions
+ */
+export function cleanupCodexSessions() {
+  if (codexCleanupInterval) {
+    clearInterval(codexCleanupInterval);
+  }
+  // Abort all active sessions
+  for (const [sessionId, session] of activeCodexSessions) {
+    try {
+      session.status = 'aborted';
+    } catch (e) {
+      // Ignore errors during shutdown
+    }
+  }
+  activeCodexSessions.clear();
+}

@@ -266,6 +266,15 @@ const authenticateWebSocketWithTicket = (ticket, purpose = 'websocket') => {
   };
 };
 
+// Wrapper functions to avoid exporting JWT_SECRET directly
+const signToken = (payload, options = {}) => {
+  return jwt.sign(payload, JWT_SECRET, options);
+};
+
+const verifyToken = (token) => {
+  return jwt.verify(token, JWT_SECRET);
+};
+
 export {
   validateApiKey,
   authenticateToken,
@@ -279,5 +288,6 @@ export {
   authenticateWebSocket,
   authenticateWebSocketWithTicket,
   validateSecurityConfig,
-  JWT_SECRET
+  signToken,
+  verifyToken
 };

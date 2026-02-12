@@ -1,5 +1,6 @@
+import React, { Suspense } from 'react';
 import { X } from 'lucide-react';
-import StandaloneShell from './StandaloneShell';
+const StandaloneShell = React.lazy(() => import('./StandaloneShell'));
 import { IS_PLATFORM } from '../constants/config';
 
 /**
@@ -78,12 +79,21 @@ function LoginModal({
           </button>
         </div>
         <div className="flex-1 overflow-hidden">
-          <StandaloneShell
-            project={project}
-            command={getCommand()}
-            onComplete={handleComplete}
-            minimal={true}
-          />
+          <Suspense fallback={
+            <div className="h-full flex items-center justify-center bg-gray-900">
+              <div className="flex items-center gap-3">
+                <div className="w-6 h-6 rounded-full border-2 border-gray-600 border-t-green-500 animate-spin" />
+                <span className="text-gray-400 text-sm">Loading terminal...</span>
+              </div>
+            </div>
+          }>
+            <StandaloneShell
+              project={project}
+              command={getCommand()}
+              onComplete={handleComplete}
+              minimal={true}
+            />
+          </Suspense>
         </div>
       </div>
     </div>

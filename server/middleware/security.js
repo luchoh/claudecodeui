@@ -20,8 +20,10 @@ export const authRateLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => {
-    // Use IP address, fallback to forwarded header for proxies
-    return req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+    // Use req.ip which respects app.set('trust proxy') configuration.
+    // Do NOT use x-forwarded-for directly as it can be spoofed to bypass rate limits.
+    // Configure app.set('trust proxy', ...) when behind a reverse proxy.
+    return req.ip || req.socket.remoteAddress;
   }
 });
 
@@ -35,7 +37,10 @@ export const generalRateLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => {
-    return req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+    // Use req.ip which respects app.set('trust proxy') configuration.
+    // Do NOT use x-forwarded-for directly as it can be spoofed to bypass rate limits.
+    // Configure app.set('trust proxy', ...) when behind a reverse proxy.
+    return req.ip || req.socket.remoteAddress;
   }
 });
 
