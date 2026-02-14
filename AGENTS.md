@@ -71,3 +71,32 @@ Never commit secrets. Start from the tracked template:
 - Local dev: `cp .env.dev.example .env.dev`
 
 Add API keys and credentials as needed. Log files and database files should be gitignored; inspect them for sensitive data before sharing.
+
+## Agent Communication
+
+### Step 1: Check if ACS tools are available
+
+On session start, check your tool inventory for ACS MCP tools:
+- Look for `register`, `send`, `check_inbox` (or `mcp__agent-comms__register` for Claude Code).
+- If these tools are **not present**, skip this section entirely — ACS is not available in this runtime. Do **not** look for MCP config files or report missing tools.
+
+### Step 2: Read the protocol and register
+
+Once ACS tools are confirmed available:
+1. **Read `COMMS_AGENT_PROTOCOL.md`** — the full runtime protocol for ACS agents.
+2. **Register** with your vendor (e.g. `vendor="claude"` for Claude Code, `vendor="codex"` for Codex).
+3. **Check inbox** between tasks. **Discover peers** and request reviews after significant work.
+
+### CRITICAL — Waiting for ACS messages
+
+When you send a message and need to wait for a reply, you MUST use the **filesystem watcher**, NOT polling with `sleep`+`curl`. The pattern (detailed in `COMMS_AGENT_PROTOCOL.md` § "Watching for notifications"):
+
+1. Call `await_notification` tool → receive `{ watchCommand, ... }`
+2. Run as a background task: `Bash(command=watchCommand, run_in_background=true)` → receive `task_id`
+3. Block on: `TaskOutput(task_id=..., block=true, timeout=...)` — waits for a filesystem event with zero CPU
+4. When it fires, call `check_inbox` for full messages.
+5. Repeat from step 1 if still expecting more replies.
+
+**Never** use `sleep N && curl`, repeated polling loops, or any other wait pattern. The filesystem watcher uses kernel events (kqueue on macOS) with zero CPU usage and sub-second latency.
+
+Note: The filesystem watcher pattern only works for agents that can block on background task output (e.g., Claude Code). Agents with request-response models (Codex CLI, Gemini CLI) should poll inbox at natural breakpoints — see `COMMS_AGENT_PROTOCOL.md` for details.
