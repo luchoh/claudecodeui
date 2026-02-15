@@ -1,0 +1,10 @@
+# /etc/systemd/system/check-tunnels.timer
+[Unit]
+Description=Run tunnel health check every 30s
+
+[Timer]
+OnBootSec=60s
+OnUnitActiveSec=30s
+
+[Install]
+WantedBy=timers.target

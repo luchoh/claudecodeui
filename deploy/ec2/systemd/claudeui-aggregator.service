@@ -1,0 +1,8 @@
+# /etc/systemd/system/claudeui-aggregator.service
+[Unit]
+Description=Aggregate backend project lists (one-shot)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/aggregate-projects.sh
+User=root

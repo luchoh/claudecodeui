@@ -1,0 +1,31 @@
+# /etc/systemd/system/chisel-server.service
+[Unit]
+Description=Chisel Tunnel Server (mTLS)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=chisel
+Group=chisel
+EnvironmentFile=/etc/chisel/env
+ExecStart=/usr/local/bin/chisel server \
+    --port 8443 \
+    --reverse \
+    --tls-key /etc/chisel/certs/server.key \
+    --tls-cert /etc/chisel/certs/server.crt \
+    --tls-ca /etc/chisel/certs/ca.crt
+# AUTH is read from environment via EnvironmentFile
+Restart=always
+RestartSec=5
+LimitNOFILE=65535
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/log/chisel
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

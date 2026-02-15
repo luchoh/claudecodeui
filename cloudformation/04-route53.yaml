@@ -1,0 +1,43 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Claude Code UI — Route53 DNS records
+
+Parameters:
+  HostedZoneId:
+    Type: AWS::Route53::HostedZone::Id
+    Description: Route53 Hosted Zone ID for the domain
+  ElasticIP:
+    Type: String
+    Description: Elastic IP address from the EC2 stack
+  DomainName:
+    Type: String
+    Default: agents.superlinear.com
+    Description: User-facing domain name
+
+Resources:
+  MainRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: A
+      TTL: 300
+      ResourceRecords:
+        - !Ref ElasticIP
+
+  TunnelRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub "tunnel.${DomainName}"
+      Type: A
+      TTL: 300
+      ResourceRecords:
+        - !Ref ElasticIP
+
+Outputs:
+  MainDomain:
+    Description: User-facing domain
+    Value: !Ref DomainName
+  TunnelDomain:
+    Description: Chisel tunnel domain
+    Value: !Sub "tunnel.${DomainName}"

@@ -1,0 +1,24 @@
+# /etc/systemd/system/chisel-client.service
+[Unit]
+Description=Chisel Tunnel Client
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=chisel
+Group=chisel
+EnvironmentFile=/etc/chisel/env
+ExecStart=/usr/local/bin/chisel client \
+    --tls-key /etc/chisel/certs/client.key \
+    --tls-cert /etc/chisel/certs/client.crt \
+    --tls-ca /etc/chisel/certs/ca.crt \
+    --keepalive 25s \
+    wss://tunnel.agents.superlinear.com:8443 \
+    R:9001:localhost:3001
+# AUTH is read from environment
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
