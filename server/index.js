@@ -98,6 +98,13 @@ import { setupWebSocketRouting } from './ws/router.js';
 import { registerAcsWebSocketBridge } from './ws/chatHandler.js';
 
 const app = express();
+
+// Trust reverse proxy (nginx) for correct req.ip in rate limiting, CSRF, etc.
+// Environment-gated so local dev is unaffected.
+if (process.env.TRUST_PROXY) {
+  app.set('trust proxy', parseInt(process.env.TRUST_PROXY, 10) || 1);
+}
+
 const server = http.createServer(app);
 
 // Single WebSocket server that handles both paths
