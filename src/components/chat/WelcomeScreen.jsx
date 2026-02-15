@@ -2,7 +2,7 @@
  * WelcomeScreen.jsx - Provider selection and empty state UI
  *
  * Extracted from ChatInterface.jsx.
- * Renders the "Choose Your AI Assistant" screen when no messages exist
+ * Renders the provider picker when no messages exist
  * and the "Continue your conversation" prompt for existing sessions.
  */
 
@@ -84,51 +84,40 @@ function WelcomeScreen({
     }, 100);
   };
 
+  const modelOptions = provider === 'claude' ? CLAUDE_MODELS.OPTIONS
+    : provider === 'codex' ? CODEX_MODELS.OPTIONS
+    : CURSOR_MODELS.OPTIONS;
+
+  const currentModel = provider === 'claude' ? claudeModel
+    : provider === 'codex' ? codexModel
+    : cursorModel;
+
+  const setCurrentModel = (val) => {
+    if (provider === 'claude') { setClaudeModel(val); localStorage.setItem('claude-model', val); }
+    else if (provider === 'codex') { setCodexModel(val); localStorage.setItem('codex-model', val); }
+    else { setCursorModel(val); localStorage.setItem('cursor-model', val); }
+  };
+
   return (
-    <div className="text-center px-6 sm:px-4 py-8">
-      <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-3">Choose Your AI Assistant</h2>
-      <p className="text-gray-600 dark:text-gray-400 mb-8">
-        Select a provider to start a new conversation
-      </p>
-
-      <div className="mb-8 flex flex-col items-center gap-3">
-        <button
-          type="button"
-          onClick={handleStartChat}
-          className="w-full sm:w-auto px-6 py-3 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-base font-semibold shadow-sm transition-all duration-150 active:scale-[0.98]"
-        >
-          {"Start Chat"}
-        </button>
-        <p className="text-xs text-gray-500 dark:text-gray-400">
-          {"Pick a provider below or start with your default."}
-        </p>
-      </div>
-
-      <div className="flex flex-col sm:flex-row gap-4 justify-center items-center mb-8">
-        {/* Claude Button */}
-        <ProviderButton
-          name="Claude Code"
-          subtitle="by Anthropic"
+    <div className="text-center px-4 py-3 w-full max-w-md mx-auto">
+      {/* Provider selection — horizontal row */}
+      <div className="flex gap-2 justify-center mb-3">
+        <ProviderPill
+          name="Claude"
           isSelected={provider === 'claude'}
           color="blue"
           onClick={() => handleProviderSelect('claude')}
           Logo={ClaudeLogo}
         />
-
-        {/* Cursor Button */}
-        <ProviderButton
+        <ProviderPill
           name="Cursor"
-          subtitle="AI Code Editor"
           isSelected={provider === 'cursor'}
           color="purple"
           onClick={() => handleProviderSelect('cursor')}
           Logo={CursorLogo}
         />
-
-        {/* Codex Button */}
-        <ProviderButton
+        <ProviderPill
           name="Codex"
-          subtitle="by OpenAI"
           isSelected={provider === 'codex'}
           color="gray"
           onClick={() => handleProviderSelect('codex')}
@@ -136,70 +125,33 @@ function WelcomeScreen({
         />
       </div>
 
-      {/* Model Selection */}
-      <div className={`mb-6 transition-opacity duration-200 ${provider ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
-        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-          Select Model
-        </label>
-        {provider === 'claude' ? (
-          <select
-            value={claudeModel}
-            onChange={(e) => {
-              const newModel = e.target.value;
-              setClaudeModel(newModel);
-              localStorage.setItem('claude-model', newModel);
-            }}
-            className="pl-4 pr-10 py-2 text-sm bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 min-w-[140px]"
+      {/* Model selector + Start button */}
+      <div className={`transition-all duration-200 ${provider ? 'opacity-100 max-h-24' : 'opacity-0 max-h-0 overflow-hidden pointer-events-none'}`}>
+        <div className="flex items-center justify-center gap-3">
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-muted-foreground">Model</label>
+            <select
+              value={currentModel}
+              onChange={(e) => setCurrentModel(e.target.value)}
+              className="pl-3 pr-8 py-1.5 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-primary/50 focus:border-primary min-w-[120px]"
+            >
+              {modelOptions.map(({ value, label }) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
+          </div>
+          <button
+            type="button"
+            onClick={handleStartChat}
+            className="px-4 py-1.5 bg-primary hover:bg-primary/90 text-primary-foreground rounded-md text-xs font-semibold transition-all duration-150 active:scale-[0.97]"
           >
-            {CLAUDE_MODELS.OPTIONS.map(({ value, label }) => (
-              <option key={value} value={value}>{label}</option>
-            ))}
-          </select>
-        ) : provider === 'codex' ? (
-          <select
-            value={codexModel}
-            onChange={(e) => {
-              const newModel = e.target.value;
-              setCodexModel(newModel);
-              localStorage.setItem('codex-model', newModel);
-            }}
-            className="pl-4 pr-10 py-2 text-sm bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-gray-500 min-w-[140px]"
-          >
-            {CODEX_MODELS.OPTIONS.map(({ value, label }) => (
-              <option key={value} value={value}>{label}</option>
-            ))}
-          </select>
-        ) : (
-          <select
-            value={cursorModel}
-            onChange={(e) => {
-              const newModel = e.target.value;
-              setCursorModel(newModel);
-              localStorage.setItem('cursor-model', newModel);
-            }}
-            className="pl-4 pr-10 py-2 text-sm bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 min-w-[140px]"
-            disabled={provider !== 'cursor'}
-          >
-            {CURSOR_MODELS.OPTIONS.map(({ value, label }) => (
-              <option key={value} value={value}>{label}</option>
-            ))}
-          </select>
-        )}
+            Start
+          </button>
+        </div>
       </div>
 
-      <p className="text-sm text-gray-500 dark:text-gray-400">
-        {provider === 'claude'
-          ? `Ready to use Claude with ${claudeModel}. Start typing your message below.`
-          : provider === 'cursor'
-          ? `Ready to use Cursor with ${cursorModel}. Start typing your message below.`
-          : provider === 'codex'
-          ? `Ready to use Codex with ${codexModel}. Start typing your message below.`
-          : "Select a provider above to begin"
-        }
-      </p>
-
       {provider && tasksEnabled && isTaskMasterInstalled && (
-        <div className="mt-4 px-4 sm:px-0">
+        <div className="mt-3 px-4 sm:px-0">
           <NextTaskBanner
             onStartTask={() => onSetInput('Start the next task')}
             onShowAllTasks={onShowAllTasks}
@@ -210,52 +162,40 @@ function WelcomeScreen({
   );
 }
 
-// ── Helper: Provider selection button ─────────────────────────────────
-const colorMap = {
+// ── Helper: Compact provider pill ─────────────────────────────────
+const pillColors = {
   blue: {
-    selected: 'border-blue-500 shadow-lg ring-2 ring-blue-500/20',
-    hover: 'border-gray-200 dark:border-gray-700 hover:border-blue-400',
-    check: 'bg-blue-500',
-    checkText: 'text-white',
+    selected: 'border-blue-500 bg-blue-50 dark:bg-blue-950/30 ring-2 ring-blue-500/20',
+    hover: 'border-gray-200 dark:border-gray-700 hover:border-blue-400 bg-white dark:bg-gray-800',
+    check: 'text-blue-500',
   },
   purple: {
-    selected: 'border-purple-500 shadow-lg ring-2 ring-purple-500/20',
-    hover: 'border-gray-200 dark:border-gray-700 hover:border-purple-400',
-    check: 'bg-purple-500',
-    checkText: 'text-white',
+    selected: 'border-purple-500 bg-purple-50 dark:bg-purple-950/30 ring-2 ring-purple-500/20',
+    hover: 'border-gray-200 dark:border-gray-700 hover:border-purple-400 bg-white dark:bg-gray-800',
+    check: 'text-purple-500',
   },
   gray: {
-    selected: 'border-gray-800 dark:border-gray-300 shadow-lg ring-2 ring-gray-800/20 dark:ring-gray-300/20',
-    hover: 'border-gray-200 dark:border-gray-700 hover:border-gray-500 dark:hover:border-gray-400',
-    check: 'bg-gray-800 dark:bg-gray-300',
-    checkText: 'text-white dark:text-gray-800',
+    selected: 'border-gray-800 dark:border-gray-300 bg-gray-50 dark:bg-gray-800/50 ring-2 ring-gray-800/20 dark:ring-gray-300/20',
+    hover: 'border-gray-200 dark:border-gray-700 hover:border-gray-500 dark:hover:border-gray-400 bg-white dark:bg-gray-800',
+    check: 'text-gray-800 dark:text-gray-300',
   },
 };
 
-function ProviderButton({ name, subtitle, isSelected, color, onClick, Logo }) {
-  const colors = colorMap[color] || colorMap.blue;
+function ProviderPill({ name, isSelected, color, onClick, Logo }) {
+  const colors = pillColors[color] || pillColors.blue;
   return (
     <button
       onClick={onClick}
-      className={`group relative w-64 h-32 bg-white dark:bg-gray-800 rounded-xl border-2 transition-all duration-200 hover:scale-105 hover:shadow-xl ${
+      className={`relative flex flex-col items-center gap-1.5 px-5 py-3 rounded-xl border-2 transition-all duration-150 active:scale-[0.97] min-w-[100px] ${
         isSelected ? colors.selected : colors.hover
       }`}
     >
-      <div className="flex flex-col items-center justify-center h-full gap-3">
-        <Logo className="w-10 h-10" />
-        <div>
-          <p className="font-semibold text-gray-900 dark:text-white">{name}</p>
-          <p className="text-xs text-gray-500 dark:text-gray-400">{subtitle}</p>
-        </div>
-      </div>
+      <Logo className="w-8 h-8" />
+      <span className="text-xs font-medium text-gray-900 dark:text-white">{name}</span>
       {isSelected && (
-        <div className="absolute top-2 right-2">
-          <div className={`w-5 h-5 ${colors.check} rounded-full flex items-center justify-center`}>
-            <svg className={`w-3 h-3 ${colors.checkText}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-            </svg>
-          </div>
-        </div>
+        <svg className={`absolute top-1.5 right-1.5 w-4 h-4 ${colors.check}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+        </svg>
       )}
     </button>
   );

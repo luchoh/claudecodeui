@@ -1208,6 +1208,29 @@ function Sidebar({
                   {/* Sessions List */}
                   {isExpanded && (
                     <div className="ml-3 space-y-1 border-l border-border pl-3">
+                      {/* New Session Button - Top of list for easy access */}
+                      <div className="md:hidden px-3 pt-1 pb-1">
+                        <button
+                          className="w-full h-8 bg-primary hover:bg-primary/90 text-primary-foreground rounded-md flex items-center justify-center gap-2 font-medium text-xs active:scale-[0.98] transition-all duration-150"
+                          onClick={() => {
+                            handleProjectSelect(project);
+                            onNewSession(project);
+                          }}
+                        >
+                          <Plus className="w-3 h-3" />
+                          {"New Session"}
+                        </button>
+                      </div>
+                      <Button
+                        variant="default"
+                        size="sm"
+                        className="hidden md:flex w-full justify-start gap-2 h-8 text-xs font-medium bg-primary hover:bg-primary/90 text-primary-foreground transition-colors"
+                        onClick={() => onNewSession(project)}
+                      >
+                        <Plus className="w-3 h-3" />
+                        {"New Session"}
+                      </Button>
+
                       {!initialSessionsLoaded.has(project.name) ? (
                         // Loading skeleton for sessions
                         Array.from({ length: 3 }).map((_, i) => (
@@ -1492,29 +1515,6 @@ function Sidebar({
                         />
                       )}
 
-                      {/* Sessions - New Session Button */}
-                      <div className="md:hidden px-3 pb-2">
-                        <button
-                          className="w-full h-8 bg-primary hover:bg-primary/90 text-primary-foreground rounded-md flex items-center justify-center gap-2 font-medium text-xs active:scale-[0.98] transition-all duration-150"
-                          onClick={() => {
-                            handleProjectSelect(project);
-                            onNewSession(project);
-                          }}
-                        >
-                          <Plus className="w-3 h-3" />
-                          {"New Session"}
-                        </button>
-                      </div>
-
-                      <Button
-                        variant="default"
-                        size="sm"
-                        className="hidden md:flex w-full justify-start gap-2 mt-1 h-8 text-xs font-medium bg-primary hover:bg-primary/90 text-primary-foreground transition-colors"
-                        onClick={() => onNewSession(project)}
-                      >
-                        <Plus className="w-3 h-3" />
-                        {"New Session"}
-                      </Button>
                     </div>
                   )}
                 </div>

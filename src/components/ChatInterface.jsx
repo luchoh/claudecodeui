@@ -1289,7 +1289,7 @@ function ChatInterface({ selectedProject, selectedSession, ws, sendMessage, late
             </div>
           </div>
         ) : chatMessages.length === 0 ? (
-          <div className="flex items-center justify-center h-full">
+          <div className="flex items-center justify-center min-h-full">
             {(!selectedSession && !currentSessionId) && (
               <WelcomeScreen
                 hasSession={false}
