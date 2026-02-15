@@ -160,6 +160,33 @@ describe('convertSessionMessages', () => {
       const result = convertSessionMessages(raw);
       expect(result[0].content).toBe('line1\nline2');
     });
+
+    it('skips assistant messages containing <system-reminder> tags', () => {
+      const raw = [{
+        message: { role: 'assistant', content: '<system-reminder>This is internal</system-reminder>' },
+        timestamp: '2025-01-01T00:00:00Z',
+      }];
+      const result = convertSessionMessages(raw);
+      expect(result).toHaveLength(0);
+    });
+
+    it('skips assistant text parts containing <system-reminder> tags', () => {
+      const raw = [{
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: 'Normal message' },
+            { type: 'text', text: '<system-reminder>Internal reminder</system-reminder>' },
+            { type: 'text', text: 'Another normal message' },
+          ],
+        },
+        timestamp: '2025-01-01T00:00:00Z',
+      }];
+      const result = convertSessionMessages(raw);
+      expect(result).toHaveLength(2);
+      expect(result[0].content).toBe('Normal message');
+      expect(result[1].content).toBe('Another normal message');
+    });
   });
 
   // ── Tool use + tool result ─────────────────────────────────────────────

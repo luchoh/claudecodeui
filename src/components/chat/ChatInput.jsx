@@ -102,7 +102,7 @@ function ChatInput({
   });
 
   return (
-    <div className={`p-2 sm:p-4 md:p-4 flex-shrink-0 ${
+    <div className={`chat-input-mobile p-2 sm:p-4 md:p-4 flex-shrink-0 ${
       isInputFocused ? 'pb-2 sm:pb-4 md:pb-6' : 'pb-2 sm:pb-4 md:pb-6'
     }`}>
 
@@ -123,7 +123,7 @@ function ChatInput({
           onGrantToolPermission={handleGrantToolPermission}
         />
 
-        <div className="flex items-center justify-center gap-3">
+        <div className="flex items-center justify-center gap-2 sm:gap-3 flex-wrap">
           <button
             type="button"
             onClick={handleModeSwitch}
@@ -136,7 +136,7 @@ function ChatInput({
                 ? 'bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-300 border-orange-300 dark:border-orange-600 hover:bg-orange-100 dark:hover:bg-orange-900/30'
                 : 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border-blue-300 dark:border-blue-600 hover:bg-blue-100 dark:hover:bg-blue-900/30'
             }`}
-            title="Click to change permission mode (or press Tab in input)"
+            title={`Permission mode: ${permissionMode === 'default' ? 'Default' : permissionMode === 'acceptEdits' ? 'Accept Edits' : permissionMode === 'bypassPermissions' ? 'Bypass Permissions' : 'Plan'} - Click to change (or press Tab in input)`}
           >
             <div className="flex items-center gap-2">
               <div className={`w-2 h-2 rounded-full ${
@@ -189,11 +189,11 @@ function ChatInput({
                 textareaRef.current.focus();
               }
             }}
-            className="relative w-8 h-8 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 rounded-full flex items-center justify-center transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:ring-offset-gray-800"
-            title="Show all commands"
+            className="relative flex items-center gap-1.5 px-2 py-1.5 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:ring-offset-gray-800"
+            title={`${slashCommands.length} slash commands available`}
           >
             <svg
-              className="w-5 h-5"
+              className="w-5 h-5 flex-shrink-0"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -205,13 +205,10 @@ function ChatInput({
                 d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"
               />
             </svg>
-            {/* Command count badge */}
+            {/* Command count with label */}
             {slashCommands.length > 0 && (
-              <span
-                className="absolute -top-1 -right-1 bg-blue-600 text-white text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center"
-                style={{ fontSize: '10px' }}
-              >
-                {slashCommands.length}
+              <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
+                <span className="hidden sm:inline">Cmds: </span>{slashCommands.length}
               </span>
             )}
           </button>

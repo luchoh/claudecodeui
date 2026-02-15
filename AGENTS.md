@@ -74,15 +74,30 @@ Add API keys and credentials as needed. Log files and database files should be g
 
 ## Agent Communication
 
-### Step 1: Check if ACS tools are available
+### Bridge-driven agents (Codex, sandboxed runners): STOP HERE
 
-On session start, check your tool inventory for ACS MCP tools:
-- Look for `register`, `send`, `check_inbox` (or `mcp__agent-comms__register` for Claude Code).
-- If these tools are **not present**, skip this section entirely — ACS is not available in this runtime. Do **not** look for MCP config files or report missing tools.
+If you are running inside `codex app-server` or any sandboxed bridge environment, **the ACS bridge handles all communication on your behalf.** You have NO MCP tools and you do NOT need them.
+
+- **Do NOT** check `.mcp.json` — that is a Claude Code config file, not yours.
+- **Do NOT** report missing MCP tools as an error or escalation.
+- **Do NOT** attempt to register, check inbox, or discover peers.
+- **Skip this entire section** and focus on the task in your prompt.
+
+### Step 1: Check if Agent Comms MCP tools are available
+
+> This step is for Claude Code, Gemini CLI, and other MCP-capable agents only.
+
+Check your tool inventory for ACS tools (`register`, `send`, `check_inbox`, or prefixed variants like `mcp__agent-comms__register`).
+
+**If ACS tools ARE available** → proceed to Step 2.
+
+**If ACS tools are NOT available:**
+- **Claude Code agents:** Check if `agent-comms` is configured in `.mcp.json` or `~/.claude.json`. If configured but tools are missing, escalate to the user: run `/mcp reset agent-comms`. If not configured, skip this section — ACS is not part of this project.
+- **Other agents:** If no ACS tools and no relevant config, skip this section.
 
 ### Step 2: Read the protocol and register
 
-Once ACS tools are confirmed available:
+Once MCP tools are confirmed available:
 1. **Read `COMMS_AGENT_PROTOCOL.md`** — the full runtime protocol for ACS agents.
 2. **Register** with your vendor (e.g. `vendor="claude"` for Claude Code, `vendor="codex"` for Codex).
 3. **Check inbox** between tasks. **Discover peers** and request reviews after significant work.
@@ -93,10 +108,8 @@ When you send a message and need to wait for a reply, you MUST use the **filesys
 
 1. Call `await_notification` tool → receive `{ watchCommand, ... }`
 2. Run as a background task: `Bash(command=watchCommand, run_in_background=true)` → receive `task_id`
-3. Block on: `TaskOutput(task_id=..., block=true, timeout=...)` — waits for a filesystem event with zero CPU
+3. Block on: `TaskOutput(task_id=..., block=true, timeout=...)` — this waits for a filesystem event with zero CPU
 4. When it fires, call `check_inbox` for full messages.
 5. Repeat from step 1 if still expecting more replies.
 
 **Never** use `sleep N && curl`, repeated polling loops, or any other wait pattern. The filesystem watcher uses kernel events (kqueue on macOS) with zero CPU usage and sub-second latency.
-
-Note: The filesystem watcher pattern only works for agents that can block on background task output (e.g., Claude Code). Agents with request-response models (Codex CLI, Gemini CLI) should poll inbox at natural breakpoints — see `COMMS_AGENT_PROTOCOL.md` for details.

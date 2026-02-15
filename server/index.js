@@ -84,6 +84,7 @@ import codexRoutes from './routes/codex.js';
 import filesRoutes from './routes/files.js';
 import uploadsRoutes from './routes/uploads.js';
 import tokenUsageRoutes from './routes/token-usage.js';
+import acsRoutes from './routes/acs.js';
 import { initializeDatabase } from './database/db.js';
 import { validateApiKey, authenticateToken, authenticateWebSocket, authenticateWebSocketWithTicket, validateSecurityConfig } from './middleware/auth.js';
 import { authRateLimiter, generalRateLimiter, errorSanitizer } from './middleware/security.js';
@@ -92,7 +93,9 @@ import { IS_PLATFORM } from './constants/config.js';
 // Extracted modules
 import { ALLOWED_ORIGINS, isOriginFromAllowedNetwork, BIND_HOST } from './utils/security.js';
 import { broadcastProgress, setupProjectsWatcher, closeProjectWatcher } from './services/projectWatcher.js';
+import { ACSConnectionManager } from './services/acs-client.js';
 import { setupWebSocketRouting } from './ws/router.js';
+import { registerAcsWebSocketBridge } from './ws/chatHandler.js';
 
 const app = express();
 const server = http.createServer(app);
@@ -144,6 +147,9 @@ const wss = new WebSocketServer({
 
 // Make WebSocket server available to routes
 app.locals.wss = wss;
+const acsManager = new ACSConnectionManager();
+app.locals.acsManager = acsManager;
+registerAcsWebSocketBridge(acsManager);
 
 // SEC-003: CORS restriction with explicit origin whitelist + network ranges
 app.use(cors({
@@ -178,9 +184,11 @@ app.use(helmet({
       imgSrc: ["'self'", "data:", "blob:", "https:"],
       fontSrc: ["'self'", "data:"],
       frameAncestors: ["'none'"],
-      formAction: ["'self'"]
+      formAction: ["'self'"],
+      upgradeInsecureRequests: null // Disable for localhost HTTP (iOS Safari)
     }
   },
+  strictTransportSecurity: false,
   crossOriginEmbedderPolicy: false, // May need adjustment for external resources
   crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' } // Allow OAuth popups
 }));
@@ -253,6 +261,7 @@ app.use('/api/projects', doubleCsrfProtection);
 app.use('/api/settings', doubleCsrfProtection);
 app.use('/api/user', doubleCsrfProtection);
 app.use('/api/taskmaster', doubleCsrfProtection);
+app.use('/api/acs', doubleCsrfProtection);
 
 app.use(express.json({
   limit: '50mb',
@@ -314,6 +323,9 @@ app.use('/api/user', authenticateToken, userRoutes);
 
 // Codex API Routes (protected)
 app.use('/api/codex', authenticateToken, codexRoutes);
+
+// ACS API Routes (protected)
+app.use('/api/acs', authenticateToken, acsRoutes);
 
 // Agent API Routes (uses API key authentication)
 app.use('/api/agent', agentRoutes);
@@ -437,6 +449,12 @@ app.get('/api/projects', authenticateToken, async (req, res) => {
         }
 
         const projects = await getProjects(broadcastProgress);
+        const manager = req.app.locals.acsManager;
+        if (manager) {
+            manager.registerAll(projects).catch((error) => {
+                console.error('[ACS] Failed to register projects:', error.message);
+            });
+        }
 
         if (timing) {
             logProjectsHttpTiming({
@@ -711,7 +729,14 @@ async function gracefulShutdown(signal) {
         await closeProjectWatcher();
     } catch (e) { /* ignore */ }
 
-    // 6. Close database
+    // 6. Close ACS connections
+    try {
+        if (app.locals.acsManager) {
+            await app.locals.acsManager.shutdown();
+        }
+    } catch (e) { /* ignore */ }
+
+    // 7. Close database
     try {
         const { closeDatabase } = await import('./database/db.js');
         if (typeof closeDatabase === 'function') {
@@ -719,7 +744,7 @@ async function gracefulShutdown(signal) {
         }
     } catch (e) { /* ignore */ }
 
-    // 7. Clean up Codex session cleanup interval
+    // 8. Clean up Codex session cleanup interval
     try {
         const { cleanupCodexSessions } = await import('./openai-codex.js');
         if (typeof cleanupCodexSessions === 'function') {

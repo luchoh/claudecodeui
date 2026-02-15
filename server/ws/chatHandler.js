@@ -31,6 +31,39 @@ export class WebSocketWriter {
   }
 }
 
+let acsBridgeRegistered = false;
+
+export function registerAcsWebSocketBridge(acsManager) {
+  if (!acsManager || acsBridgeRegistered) {
+    return;
+  }
+
+  acsBridgeRegistered = true;
+
+  const forward = (type) => (payload) => {
+    const message = JSON.stringify({
+      type,
+      ...payload
+    });
+
+    connectedClients.forEach((client) => {
+      if (client.readyState === WebSocket.OPEN) {
+        try {
+          client.send(message);
+        } catch (error) {
+          console.error('[ACS] WebSocket broadcast error:', error);
+        }
+      }
+    });
+  };
+
+  acsManager.on('acs-message-received', forward('acs-message-received'));
+  acsManager.on('acs-agent-changed', forward('acs-agent-changed'));
+  acsManager.on('acs-bridge-status', forward('acs-bridge-status'));
+  acsManager.on('acs-connection-changed', forward('acs-connection-changed'));
+  acsManager.on('acs-notification', forward('acs-notification'));
+}
+
 // Handle chat WebSocket connections
 export function handleChatConnection(ws) {
     console.log('[INFO] Chat WebSocket connected');

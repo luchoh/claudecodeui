@@ -80,7 +80,16 @@ export default function useWebSocketHandler({
 
     // Filter messages by session ID to prevent cross-session interference
     // Skip filtering for global messages that apply to all sessions
-    const globalMessageTypes = ['projects_updated', 'taskmaster-project-updated', 'session-created'];
+    const globalMessageTypes = [
+      'projects_updated',
+      'taskmaster-project-updated',
+      'session-created',
+      'acs-message-received',
+      'acs-agent-changed',
+      'acs-bridge-status',
+      'acs-connection-changed',
+      'acs-notification'
+    ];
     const isGlobalMessage = globalMessageTypes.includes(latestMessage.type);
     const lifecycleMessageTypes = new Set([
       'claude-complete',

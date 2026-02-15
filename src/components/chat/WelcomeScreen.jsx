@@ -72,12 +72,37 @@ function WelcomeScreen({
     setTimeout(() => textareaRef.current?.focus(), 100);
   };
 
+  const handleStartChat = () => {
+    const nextProvider = provider || 'claude';
+    if (!provider) {
+      setProvider(nextProvider);
+      localStorage.setItem('selected-provider', nextProvider);
+    }
+    setTimeout(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 100);
+  };
+
   return (
     <div className="text-center px-6 sm:px-4 py-8">
       <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-3">Choose Your AI Assistant</h2>
       <p className="text-gray-600 dark:text-gray-400 mb-8">
         Select a provider to start a new conversation
       </p>
+
+      <div className="mb-8 flex flex-col items-center gap-3">
+        <button
+          type="button"
+          onClick={handleStartChat}
+          className="w-full sm:w-auto px-6 py-3 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-base font-semibold shadow-sm transition-all duration-150 active:scale-[0.98]"
+        >
+          {"Start Chat"}
+        </button>
+        <p className="text-xs text-gray-500 dark:text-gray-400">
+          {"Pick a provider below or start with your default."}
+        </p>
+      </div>
 
       <div className="flex flex-col sm:flex-row gap-4 justify-center items-center mb-8">
         {/* Claude Button */}

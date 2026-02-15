@@ -17,9 +17,18 @@ function TokenUsagePie({ used, total }) {
     return '#ef4444'; // red
   };
 
+  // Format token count compactly (e.g., 67k/160k)
+  const formatTokens = (n) => {
+    if (n >= 1000) return `${Math.round(n / 1000)}k`;
+    return n.toString();
+  };
+
   return (
-    <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
-      <svg width="24" height="24" viewBox="0 0 24 24" className="transform -rotate-90">
+    <div
+      className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400"
+      title={`Context window: ${used.toLocaleString()} / ${total.toLocaleString()} tokens used (${percentage.toFixed(1)}%)`}
+    >
+      <svg width="24" height="24" viewBox="0 0 24 24" className="transform -rotate-90 flex-shrink-0">
         {/* Background circle */}
         <circle
           cx="12"
@@ -43,9 +52,10 @@ function TokenUsagePie({ used, total }) {
           strokeLinecap="round"
         />
       </svg>
-      <span title={`${used.toLocaleString()} / ${total.toLocaleString()} tokens`}>
-        {percentage.toFixed(1)}%
-      </span>
+      {/* Desktop: "Context: 41.9%" | Mobile: "67k/160k" */}
+      <span className="hidden sm:inline text-gray-500 dark:text-gray-400">Context:</span>
+      <span className="hidden sm:inline">{percentage.toFixed(1)}%</span>
+      <span className="sm:hidden">{formatTokens(used)}/{formatTokens(total)}</span>
     </div>
   );
 }

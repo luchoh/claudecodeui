@@ -612,19 +612,21 @@
       opacity: 1 !important;
     }
     
-    /* Only disable hover states for interactive elements, not containers */
+    /* Disable hover background/color changes on touch devices (preserve opacity/transform for active states) */
     button:hover,
     [role="button"]:hover,
     .cursor-pointer:hover,
     a:hover,
     .hover\:bg-gray-50:hover,
     .hover\:bg-gray-100:hover,
-    .hover\:text-gray-900:hover,
-    .hover\:opacity-100:hover {
+    .hover\:text-gray-900:hover {
       background-color: inherit !important;
       color: inherit !important;
+    }
+
+    /* Only reset hover opacity for explicit hover-opacity utilities, not all elements */
+    .hover\:opacity-100:hover {
       opacity: inherit !important;
-      transform: inherit !important;
     }
     
     /* Force buttons to be immediately clickable */
@@ -664,6 +666,10 @@
   }
   
   @media screen and (max-width: 768px) {
+    .pb-mobile-nav {
+      padding-bottom: calc(60px + max(env(safe-area-inset-bottom), 12px));
+    }
+
     .chat-input-mobile {
       padding-bottom: calc(60px + max(env(safe-area-inset-bottom), 12px));
     }

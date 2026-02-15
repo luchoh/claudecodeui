@@ -12,9 +12,11 @@ import CursorLogo from './CursorLogo.jsx';
 import CodexLogo from './CodexLogo.jsx';
 import TaskIndicator from './TaskIndicator';
 import ProjectCreationWizard from './ProjectCreationWizard';
+import AgentMessages from './AgentMessages';
 import { api } from '../utils/api';
 import { useTaskMaster } from '../contexts/TaskMasterContext';
 import { useTasksSettings } from '../contexts/TasksSettingsContext';
+import { useACS } from '../contexts/ACSContext';
 import { IS_PLATFORM } from '../constants/config';
 
 // Move formatTimeAgo outside component to avoid recreation on every render
@@ -86,6 +88,7 @@ function Sidebar({
   // TaskMaster context
   const { setCurrentProject, mcpServerStatus } = useTaskMaster();
   const { tasksEnabled } = useTasksSettings();
+  const { enabled: acsEnabled, projectConnections, refreshInbox, markThreadRead } = useACS();
 
 
   // Starred projects state - persisted in localStorage
@@ -489,6 +492,37 @@ function Sidebar({
 
     // Update TaskMaster context with the selected project
     setCurrentProject(project);
+
+    if (acsEnabled && project?.name) {
+      refreshInbox(project.name);
+    }
+  };
+
+  const handleAgentThreadSelect = (thread, project) => {
+    handleProjectSelect(project);
+    onSessionSelect({
+      ...thread,
+      id: thread.id,
+      agentId: thread.agentId,
+      subject: thread.subject,
+      messages: thread.messages,
+      __provider: 'acs',
+      __projectName: project.name
+    });
+    markThreadRead(project.name, thread.id);
+  };
+
+  const handleAgentCompose = (project) => {
+    handleProjectSelect(project);
+    onSessionSelect({
+      id: `acs-compose-${project.name}-${Date.now()}`,
+      agentId: '',
+      subject: '',
+      messages: [],
+      mode: 'compose',
+      __provider: 'acs',
+      __projectName: project.name
+    });
   };
 
   return (
@@ -846,6 +880,7 @@ function Sidebar({
               const isSelected = selectedProject?.name === project.name;
               const isStarred = isProjectStarred(project.name);
               const isDeleting = deletingProjects.has(project.name);
+              const acsUnreadCount = acsEnabled ? (projectConnections[project.name]?.unreadCount || 0) : 0;
 
               return (
                 <div key={project.name} className={cn("md:space-y-1", isDeleting && "opacity-50 pointer-events-none")}>
@@ -901,9 +936,16 @@ function Sidebar({
                               ) : (
                                 <>
                                   <div className="flex items-center justify-between min-w-0 flex-1">
-                                    <h3 className="text-sm font-medium text-foreground truncate">
-                                      {project.displayName}
-                                    </h3>
+                                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                                      <h3 className="text-sm font-medium text-foreground truncate">
+                                        {project.displayName}
+                                      </h3>
+                                      {acsUnreadCount > 0 && (
+                                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-semibold">
+                                          {acsUnreadCount}
+                                        </span>
+                                      )}
+                                    </div>
                                     {tasksEnabled && (
                                       <TaskIndicator
                                         status={(() => {
@@ -1060,8 +1102,15 @@ function Sidebar({
                             </div>
                           ) : (
                             <div>
-                              <div className="text-sm font-semibold truncate text-foreground" title={project.displayName}>
-                                {project.displayName}
+                              <div className="flex items-center gap-2">
+                                <div className="text-sm font-semibold truncate text-foreground" title={project.displayName}>
+                                  {project.displayName}
+                                </div>
+                                {acsUnreadCount > 0 && (
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-semibold">
+                                    {acsUnreadCount}
+                                  </span>
+                                )}
                               </div>
                               <div className="text-xs text-muted-foreground">
                                 {(() => {
@@ -1432,6 +1481,15 @@ function Sidebar({
                             </>
                           )}
                         </Button>
+                      )}
+
+                      {acsEnabled && (
+                        <AgentMessages
+                          project={project}
+                          selectedThreadId={selectedSession?.__provider === 'acs' ? selectedSession.id : null}
+                          onSelectThread={handleAgentThreadSelect}
+                          onCompose={handleAgentCompose}
+                        />
                       )}
 
                       {/* Sessions - New Session Button */}

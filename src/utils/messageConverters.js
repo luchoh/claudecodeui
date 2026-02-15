@@ -124,13 +124,17 @@ export function convertSessionMessages(rawMessages) {
           if (part.type === 'text') {
             let text = part.text;
             if (typeof text === 'string') {
+              // Skip system reminder content in assistant messages
+              if (text.includes('<system-reminder>')) {
+                continue;
+              }
               text = unescapeWithMathProtection(text);
+              converted.push({
+                type: 'assistant',
+                content: text,
+                timestamp: msg.timestamp || new Date().toISOString()
+              });
             }
-            converted.push({
-              type: 'assistant',
-              content: text,
-              timestamp: msg.timestamp || new Date().toISOString()
-            });
           } else if (part.type === 'tool_use') {
             const toolResult = toolResults.get(part.id);
 
@@ -153,12 +157,15 @@ export function convertSessionMessages(rawMessages) {
         }
       } else if (typeof msg.message.content === 'string') {
         let text = msg.message.content;
-        text = unescapeWithMathProtection(text);
-        converted.push({
-          type: 'assistant',
-          content: text,
-          timestamp: msg.timestamp || new Date().toISOString()
-        });
+        // Skip system reminder content in assistant messages
+        if (!text.includes('<system-reminder>')) {
+          text = unescapeWithMathProtection(text);
+          converted.push({
+            type: 'assistant',
+            content: text,
+            timestamp: msg.timestamp || new Date().toISOString()
+          });
+        }
       }
     }
   }

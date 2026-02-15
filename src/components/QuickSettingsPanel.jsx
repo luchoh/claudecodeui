@@ -365,10 +365,10 @@ const QuickSettingsPanel = ({
   if (isMobile) {
     return (
       <>
-        {/* Mobile toggle button - fixed at bottom-right, above MobileNav */}
+        {/* Mobile toggle button - fixed at bottom-right, above MobileNav (z-[60] to beat MobileNav z-50) */}
         <button
           onClick={handleToggle}
-          className="fixed right-3 z-50 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-full p-2.5 shadow-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors touch-manipulation"
+          className="fixed right-3 z-[60] bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-full w-11 h-11 flex items-center justify-center shadow-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors touch-manipulation"
           style={{ bottom: 'calc(var(--mobile-nav-total) + 12px)' }}
           aria-label={localIsOpen ? "Close settings panel" : "Open settings panel"}
         >
@@ -377,17 +377,18 @@ const QuickSettingsPanel = ({
 
         {/* Mobile bottom sheet */}
         <div
-          className={`fixed left-0 right-0 bg-background border-t border-border rounded-t-2xl shadow-2xl transform transition-transform duration-300 ease-out z-40 ${
-            localIsOpen ? 'translate-y-0' : 'translate-y-full'
+          className={`fixed left-0 right-0 bg-background border-t border-border rounded-t-2xl shadow-2xl transform transition-transform duration-300 ease-out z-[55] ${
+            localIsOpen ? 'translate-y-0 pointer-events-auto' : 'pointer-events-none'
           }`}
           style={{
             bottom: 'var(--mobile-nav-total)',
-            maxHeight: '70vh',
+            maxHeight: '50vh',
+            ...(!localIsOpen && { transform: 'translateY(calc(100% + var(--mobile-nav-total)))' }),
           }}
         >
           {/* Bottom sheet drag indicator */}
-          <div className="flex justify-center pt-2 pb-1">
-            <div className="w-10 h-1 rounded-full bg-gray-300 dark:bg-gray-600" />
+          <div className="flex justify-center pt-3 pb-1">
+            <div className="w-12 h-1.5 rounded-full bg-gray-400 dark:bg-gray-500" />
           </div>
 
           {/* Header with close button */}
@@ -398,7 +399,7 @@ const QuickSettingsPanel = ({
             </h3>
             <button
               onClick={handleToggle}
-              className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors touch-manipulation"
+              className="w-11 h-11 flex items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors touch-manipulation"
               aria-label="Close settings"
             >
               <X className="h-5 w-5 text-gray-500 dark:text-gray-400" />
@@ -406,7 +407,7 @@ const QuickSettingsPanel = ({
           </div>
 
           {/* Scrollable settings content */}
-          <div className="overflow-y-auto p-4 space-y-6 bg-background" style={{ maxHeight: 'calc(70vh - 80px)' }}>
+          <div className="overflow-y-auto p-4 space-y-6 bg-background" style={{ maxHeight: 'calc(50vh - 80px)' }}>
             {settingsContent}
           </div>
         </div>
@@ -414,7 +415,7 @@ const QuickSettingsPanel = ({
         {/* Backdrop */}
         {localIsOpen && (
           <div
-            className="fixed inset-0 bg-background/80 backdrop-blur-sm z-30 transition-opacity duration-150 ease-out"
+            className="fixed inset-0 bg-black/40 z-[52] transition-opacity duration-150 ease-out"
             onClick={handleToggle}
           />
         )}

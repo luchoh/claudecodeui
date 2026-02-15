@@ -32,11 +32,13 @@ import { AuthProvider } from './contexts/AuthContext';
 import { TaskMasterProvider } from './contexts/TaskMasterContext';
 import { TasksSettingsProvider } from './contexts/TasksSettingsContext';
 import { WebSocketProvider, useWebSocket } from './contexts/WebSocketContext';
+import { ACSProvider, useACS } from './contexts/ACSContext';
 import { ChatProvider } from './contexts/ChatContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import { useVersionCheck } from './hooks/useVersionCheck';
 import useLocalStorage from './hooks/useLocalStorage';
 import { api, authenticatedFetch } from './utils/api';
+import AgentNotification from './components/AgentNotification';
 
 
 // ! Move to a separate file called AppContent.ts
@@ -84,6 +86,7 @@ function AppContent() {
   const [externalMessageUpdate, setExternalMessageUpdate] = useState(0);
 
   const { ws, sendMessage, latestMessage } = useWebSocket();
+  const { latestNotification, getThread, markThreadRead, projectConnections } = useACS();
 
   // Ref to track loading progress timeout for cleanup
   const loadingProgressTimeoutRef = useRef(null);
@@ -98,7 +101,6 @@ function AppContent() {
                           window.navigator.standalone ||
                           document.referrer.includes('android-app://');
       setIsPWA(isStandalone);
-        document.addEventListener('touchstart', {});
 
       // Add class to html and body for CSS targeting
       if (isStandalone) {
@@ -141,6 +143,9 @@ function AppContent() {
   const isUpdateAdditive = (currentProjects, updatedProjects, selectedProject, selectedSession) => {
     if (!selectedProject || !selectedSession) {
       // No active session to protect, allow all updates
+      return true;
+    }
+    if (selectedSession.__provider === 'acs') {
       return true;
     }
 
@@ -198,7 +203,7 @@ function AppContent() {
 
         // External Session Update Detection: Check if the changed file is the current session's JSONL
         // If so, and the session is not active, trigger a message reload in ChatInterface
-        if (latestMessage.changedFile && selectedSession && selectedProject) {
+        if (latestMessage.changedFile && selectedSession && selectedProject && selectedSession.__provider !== 'acs') {
           // Extract session ID from changedFile (format: "project-name/session-id.jsonl")
           const normalized = latestMessage.changedFile.replace(/\\/g, '/');
           const changedFileParts = normalized.split('/');
@@ -258,7 +263,7 @@ function AppContent() {
               setSelectedProject(updatedSelectedProject);
             }
 
-            if (selectedSession) {
+            if (selectedSession && selectedSession.__provider !== 'acs') {
               const allSessions = [
                 ...(updatedSelectedProject.sessions || []),
                 ...(updatedSelectedProject.codexSessions || []),
@@ -281,6 +286,24 @@ function AppContent() {
       }
     };
   }, [latestMessage, selectedProject, selectedSession, activeSessions]);
+
+  useEffect(() => {
+    if (selectedSession?.__provider !== 'acs') return;
+    const repo = selectedSession.__projectName || selectedProject?.name;
+    if (!repo) return;
+    const thread = getThread(repo, selectedSession.id);
+    if (!thread) return;
+    const needsUpdate =
+      thread.lastMessageAt !== selectedSession.lastMessageAt ||
+      (thread.messages?.length || 0) !== (selectedSession.messages?.length || 0);
+    if (needsUpdate) {
+      setSelectedSession({
+        ...thread,
+        __provider: 'acs',
+        __projectName: repo
+      });
+    }
+  }, [projectConnections, selectedSession, selectedProject, getThread]);
 
   const fetchProjects = async () => {
     try {
@@ -405,6 +428,14 @@ function AppContent() {
       setActiveTab('chat');
     }
 
+    if (session.__provider === 'acs') {
+      if (isMobile) {
+        setSidebarOpen(false);
+      }
+      navigate('/');
+      return;
+    }
+
     // For Cursor sessions, we need to set the session ID differently
     // since they're persistent and not created by Claude
     const provider = localStorage.getItem('selected-provider') || 'claude';
@@ -426,6 +457,29 @@ function AppContent() {
     }
     navigate(`/session/${session.id}`);
   };
+
+  const handleAcsView = useCallback((notification) => {
+    if (!notification?.repo) return;
+    const project = projects.find((p) => p.name === notification.repo);
+    if (!project) return;
+    setSelectedProject(project);
+    const thread = getThread(notification.repo, notification.threadId);
+    const session = thread || {
+      id: notification.threadId,
+      agentId: notification.agentId,
+      subject: notification.subject,
+      messages: [],
+      preview: notification.preview
+    };
+    setSelectedSession({
+      ...session,
+      __provider: 'acs',
+      __projectName: project.name
+    });
+    markThreadRead(notification.repo, notification.threadId);
+    setActiveTab('chat');
+    navigate('/');
+  }, [projects, getThread, markThreadRead, navigate]);
 
   const handleNewSession = (project) => {
     setSelectedProject(project);
@@ -860,8 +914,8 @@ function AppContent() {
 
       {/* Mobile Sidebar Overlay */}
       {isMobile && (
-        <div className={`fixed inset-0 z-50 flex transition-all duration-150 ease-out ${
-          sidebarOpen ? 'opacity-100 visible' : 'opacity-0 invisible'
+        <div className={`fixed inset-0 z-50 flex transition-[opacity,visibility] duration-150 ease-out ${
+          sidebarOpen ? 'opacity-100 visible pointer-events-auto' : 'opacity-0 invisible pointer-events-none'
         }`}>
           <button
             className="fixed inset-0 bg-background/80 backdrop-blur-sm transition-opacity duration-150 ease-out"
@@ -979,6 +1033,11 @@ function AppContent() {
         initialTab={settingsInitialTab}
       />
 
+      <AgentNotification
+        notification={latestNotification}
+        onView={handleAcsView}
+      />
+
       {/* Version Upgrade Modal */}
       <VersionUpgradeModal />
     </div>
@@ -993,14 +1052,16 @@ function App() {
         <WebSocketProvider>
           <TasksSettingsProvider>
             <TaskMasterProvider>
-              <ProtectedRoute>
-                <Router basename={window.__ROUTER_BASENAME__ || ''}>
-                  <Routes>
-                    <Route path="/" element={<AppContent />} />
-                    <Route path="/session/:sessionId" element={<AppContent />} />
-                  </Routes>
-                </Router>
-              </ProtectedRoute>
+              <ACSProvider>
+                <ProtectedRoute>
+                  <Router basename={window.__ROUTER_BASENAME__ || ''}>
+                    <Routes>
+                      <Route path="/" element={<AppContent />} />
+                      <Route path="/session/:sessionId" element={<AppContent />} />
+                    </Routes>
+                  </Router>
+                </ProtectedRoute>
+              </ACSProvider>
             </TaskMasterProvider>
           </TasksSettingsProvider>
         </WebSocketProvider>

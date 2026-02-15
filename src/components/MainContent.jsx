@@ -16,12 +16,14 @@ const PRDEditor = lazy(() => import('./PRDEditor'));
 import ErrorBoundary from './ErrorBoundary';
 import ClaudeLogo from './ClaudeLogo';
 import CursorLogo from './CursorLogo';
+import AgentThread from './AgentThread';
 import TaskList from './TaskList';
 import TaskDetail from './TaskDetail';
 import Tooltip from './Tooltip';
 import { useTaskMaster } from '../contexts/TaskMasterContext';
 import { useTasksSettings } from '../contexts/TasksSettingsContext';
 import { api } from '../utils/api';
+import { MessageSquare } from 'lucide-react';
 
 function MainContent({
   selectedProject,
@@ -265,6 +267,8 @@ function MainContent({
     );
   }
 
+  const isAcsThread = selectedSession?.__provider === 'acs';
+
   return (
     <div className="h-full flex flex-col">
       {/* Header with tabs */}
@@ -292,6 +296,8 @@ function MainContent({
                 <div className="w-5 h-5 flex-shrink-0 flex items-center justify-center">
                   {selectedSession.__provider === 'cursor' ? (
                     <CursorLogo className="w-4 h-4" />
+                  ) : selectedSession.__provider === 'acs' ? (
+                    <MessageSquare className="w-4 h-4 text-primary" />
                   ) : (
                     <ClaudeLogo className="w-4 h-4" />
                   )}
@@ -301,7 +307,11 @@ function MainContent({
                 {activeTab === 'chat' && selectedSession ? (
                   <div className="min-w-0">
                     <h2 className="text-sm sm:text-base font-semibold text-gray-900 dark:text-white whitespace-nowrap overflow-x-auto scrollbar-hide">
-                      {selectedSession.__provider === 'cursor' ? (selectedSession.name || 'Untitled Session') : (selectedSession.summary || 'New Session')}
+                      {selectedSession.__provider === 'cursor'
+                        ? (selectedSession.name || 'Untitled Session')
+                        : selectedSession.__provider === 'acs'
+                          ? (selectedSession.agentId || selectedSession.subject || 'Agent Message')
+                          : (selectedSession.summary || 'New Session')}
                     </h2>
                     <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
                       {selectedProject.displayName}
@@ -432,16 +442,20 @@ function MainContent({
         <div className={`flex-1 flex flex-col min-h-0 overflow-hidden ${editingFile ? 'mr-0' : ''} ${editorExpanded ? 'hidden' : ''}`}>
           <div className={`h-full ${activeTab === 'chat' ? 'block' : 'hidden'}`}>
             <ErrorBoundary showDetails={true}>
-              <ChatInterface
-              selectedProject={selectedProject}
-              selectedSession={selectedSession}
-              ws={ws}
-              sendMessage={sendMessage}
-              latestMessage={latestMessage}
-              onFileOpen={handleFileOpen}
-              onInputFocusChange={onInputFocusChange}
-              onShowAllTasks={tasksEnabled ? () => setActiveTab('tasks') : null}
-            />
+              {isAcsThread ? (
+                <AgentThread project={selectedProject} thread={selectedSession} />
+              ) : (
+                <ChatInterface
+                  selectedProject={selectedProject}
+                  selectedSession={selectedSession}
+                  ws={ws}
+                  sendMessage={sendMessage}
+                  latestMessage={latestMessage}
+                  onFileOpen={handleFileOpen}
+                  onInputFocusChange={onInputFocusChange}
+                  onShowAllTasks={tasksEnabled ? () => setActiveTab('tasks') : null}
+                />
+              )}
           </ErrorBoundary>
         </div>
         {activeTab === 'files' && (

@@ -18,6 +18,7 @@ import AgentListItem from './settings/AgentListItem';
 import AccountContent from './settings/AccountContent';
 import PermissionsContent from './settings/PermissionsContent';
 import McpServersContent from './settings/McpServersContent';
+import ACSBridges from './settings/ACSBridges';
 
 function Settings({ isOpen, onClose, projects = [], initialTab = 'agents' }) {
   const { isDarkMode, toggleDarkMode } = useTheme();
@@ -56,7 +57,7 @@ function Settings({ isOpen, onClose, projects = [], initialTab = 'agents' }) {
   const [activeTab, setActiveTab] = useState(initialTab);
   const [jsonValidationError, setJsonValidationError] = useState('');
   const [selectedAgent, setSelectedAgent] = useState('claude'); // 'claude', 'cursor', or 'codex'
-  const [selectedCategory, setSelectedCategory] = useState('account'); // 'account', 'permissions', or 'mcp'
+  const [selectedCategory, setSelectedCategory] = useState('account'); // 'account', 'permissions', 'mcp', or 'acs'
 
   // Code Editor settings
   const [codeEditorTheme, setCodeEditorTheme] = useState(() =>
@@ -1324,6 +1325,16 @@ function Settings({ isOpen, onClose, projects = [], initialTab = 'agents' }) {
                       >
                         MCP Servers
                       </button>
+                      <button
+                        onClick={() => setSelectedCategory('acs')}
+                        className={`px-3 md:px-4 py-2 md:py-3 text-xs md:text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
+                          selectedCategory === 'acs'
+                            ? 'border-blue-600 text-blue-600 dark:text-blue-400'
+                            : 'border-transparent text-muted-foreground hover:text-foreground'
+                        }`}
+                      >
+                        ACS Bridges
+                      </button>
                     </div>
                   </div>
 
@@ -1421,6 +1432,10 @@ function Settings({ isOpen, onClose, projects = [], initialTab = 'agents' }) {
                         onEdit={(server) => openCodexMcpForm(server)}
                         onDelete={(serverId) => handleCodexMcpDelete(serverId)}
                       />
+                    )}
+
+                    {selectedCategory === 'acs' && (
+                      <ACSBridges />
                     )}
                   </div>
                 </div>
