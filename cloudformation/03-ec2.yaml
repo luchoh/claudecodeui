@@ -232,7 +232,7 @@ Resources:
       BlockDeviceMappings:
         - DeviceName: /dev/xvda
           Ebs:
-            VolumeSize: 30
+            VolumeSize: 20
             VolumeType: gp3
       MetadataOptions:
         HttpTokens: required          # IMDSv2 only
@@ -267,12 +267,15 @@ Resources:
           chown chisel:chisel /var/log/chisel
 
           # --- Secrets from Secrets Manager ---
+          # Suppress trace to avoid printing secrets in cloud-init logs
+          set +x
           CHISEL_AUTH=$(aws secretsmanager get-secret-value \
             --region ${AWS::Region} \
             --secret-id claudeui/chisel-auth \
             --query SecretString --output text)
           echo "AUTH=$CHISEL_AUTH" > /etc/chisel/env
           chmod 600 /etc/chisel/env
+          set -x
 
           # --- Chisel systemd service ---
           cat > /etc/systemd/system/chisel-server.service << 'UNIT'
@@ -301,6 +304,7 @@ Resources:
           systemctl daemon-reload
 
           # --- mTLS certificates from Secrets Manager ---
+          set +x  # Suppress trace for secrets
           CA_CERT=$(aws secretsmanager get-secret-value --region ${AWS::Region} \
             --secret-id claudeui/mtls-ca-cert --query SecretString --output text 2>/dev/null || echo "")
           SERVER_CERT=$(aws secretsmanager get-secret-value --region ${AWS::Region} \
@@ -314,12 +318,14 @@ Resources:
             echo "$CA_CERT" > /etc/chisel/certs/ca.crt
             echo "$SERVER_CERT" > /etc/chisel/certs/server.crt
             echo "$SERVER_KEY" > /etc/chisel/certs/server.key
+            set -x
             chown chisel:chisel /etc/chisel/certs/*
             chmod 644 /etc/chisel/certs/ca.crt /etc/chisel/certs/server.crt
             chmod 600 /etc/chisel/certs/server.key
             systemctl enable --now chisel-server
             echo "INFO: chisel-server started with mTLS certs from Secrets Manager"
           else
+            set -x
             systemctl enable chisel-server
             echo "WARN: mTLS certs not provisioned yet. Provision secrets and rebuild instance:"
             echo "  claudeui/mtls-ca-cert, claudeui/mtls-server-cert, claudeui/mtls-server-key"
@@ -438,12 +444,15 @@ Resources:
           systemctl enable --now nginx
 
           # --- Frontend build from git (runs after nginx, non-fatal) ---
+          set +x  # Suppress trace for deploy key
           DEPLOY_KEY=$(aws secretsmanager get-secret-value --region ${AWS::Region} \
             --secret-id claudeui/github-deploy-key --query SecretString --output text 2>/dev/null || echo "")
+          set -x
 
           if echo "$DEPLOY_KEY" | grep -q "BEGIN"; then
             (
               set +e  # Don't abort script if build fails
+              set +x  # Don't echo deploy key to logs
               mkdir -p /root/.ssh
               echo "$DEPLOY_KEY" > /root/.ssh/deploy_key
               chmod 600 /root/.ssh/deploy_key
@@ -453,6 +462,7 @@ Resources:
             StrictHostKeyChecking accept-new
           SSH_CONFIG
               chmod 600 /root/.ssh/config
+              set -x  # Re-enable trace for build commands
 
               WORK_DIR=$(mktemp -d)
               git clone -b ${RepoBranch} --depth 1 ${RepoUrl} "$WORK_DIR" && \
