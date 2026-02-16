@@ -99,8 +99,9 @@ import { registerAcsWebSocketBridge } from './ws/chatHandler.js';
 
 const app = express();
 
-// Trust reverse proxy (nginx) for correct req.ip in rate limiting, CSRF, etc.
+// Trust reverse proxy for correct req.ip in rate limiting, CSRF, etc.
 // TRUST_PROXY overrides the hop count; defaults to 1 (single reverse proxy).
+// EC2 + ALB deployment needs TRUST_PROXY=2 (Client → ALB → Nginx → Express).
 const trustProxyHops = parseInt(process.env.TRUST_PROXY, 10);
 app.set('trust proxy', Number.isNaN(trustProxyHops) ? 1 : trustProxyHops);
 

@@ -1,6 +1,7 @@
 # CloudFormation Stacks — Claude Code UI EC2 Deployment
 
 Infrastructure as Code for the Claude Code UI EC2 + Chisel tunnel deployment.
+TLS is handled by ALB + ACM (auto-renewing). Nginx runs HTTP-only behind the ALB.
 
 ## Prerequisites
 
@@ -8,6 +9,14 @@ Infrastructure as Code for the Claude Code UI EC2 + Chisel tunnel deployment.
 - A Route53 hosted zone for your domain (e.g., `superlinear.com`)
 
 The EC2 key pair and AMI are managed declaratively by the stack — no manual lookup required.
+
+## Stacks
+
+| # | Template | Stack Name | Resources |
+|---|----------|------------|-----------|
+| 1 | `01-network.yaml` | `claudeui-network` | VPC, subnets (2 AZs), IGW, routes |
+| 2 | `02-secrets.yaml` | `claudeui-secrets` | Secrets Manager entries |
+| 3 | `03-ec2.yaml` | `claudeui-ec2` | EC2, EIP, SGs, IAM, ALB, ACM cert, target group, listeners, Route53 records |
 
 ## Deploy Order
 
@@ -40,9 +49,9 @@ aws secretsmanager put-secret-value \
   --region us-west-2
 ```
 
-### 3. EC2 Instance
+### 3. EC2 Instance + ALB + ACM + DNS
 
-Get the VPC and Subnet IDs from the network stack outputs:
+Get the VPC, Subnet, and Hosted Zone IDs:
 
 ```bash
 VPC_ID=$(aws cloudformation describe-stacks \
@@ -50,10 +59,20 @@ VPC_ID=$(aws cloudformation describe-stacks \
   --query 'Stacks[0].Outputs[?OutputKey==`VpcId`].OutputValue' \
   --output text --region us-west-2)
 
-SUBNET_ID=$(aws cloudformation describe-stacks \
+SUBNET_A_ID=$(aws cloudformation describe-stacks \
   --stack-name claudeui-network \
   --query 'Stacks[0].Outputs[?OutputKey==`SubnetAId`].OutputValue' \
   --output text --region us-west-2)
+
+SUBNET_B_ID=$(aws cloudformation describe-stacks \
+  --stack-name claudeui-network \
+  --query 'Stacks[0].Outputs[?OutputKey==`SubnetBId`].OutputValue' \
+  --output text --region us-west-2)
+
+HOSTED_ZONE_ID=$(aws route53 list-hosted-zones-by-name \
+  --dns-name superlinear.com \
+  --query 'HostedZones[0].Id' \
+  --output text --region us-west-2 | sed 's|/hostedzone/||')
 
 aws cloudformation deploy \
   --template-file 03-ec2.yaml \
@@ -62,9 +81,15 @@ aws cloudformation deploy \
   --capabilities CAPABILITY_IAM \
   --parameter-overrides \
     VpcId="$VPC_ID" \
-    SubnetId="$SUBNET_ID" \
+    SubnetId="$SUBNET_A_ID" \
+    SubnetBId="$SUBNET_B_ID" \
+    HostedZoneId="$HOSTED_ZONE_ID" \
     AdminCidr="YOUR_IP/32"
 ```
+
+**Note:** ACM certificate validation happens automatically via DNS. CloudFormation
+will wait for the certificate to be issued before creating the HTTPS listener. This
+typically completes within a few minutes.
 
 After deployment, retrieve the SSH private key from SSM Parameter Store:
 
@@ -83,9 +108,14 @@ aws ssm get-parameter \
 chmod 600 claudeui-ec2-key.pem
 ```
 
-### 4. Route53 DNS
+## Post-Deploy Manual Steps
 
-Get the Elastic IP and Hosted Zone ID:
+Nginx config and the default backend map are deployed declaratively via UserData.
+Only the mTLS certificates require manual deployment.
+
+### 1. Deploy mTLS Certificates
+
+Generate certificates per the PRD Section 6.1, then copy to the instance:
 
 ```bash
 ELASTIC_IP=$(aws cloudformation describe-stacks \
@@ -93,29 +123,6 @@ ELASTIC_IP=$(aws cloudformation describe-stacks \
   --query 'Stacks[0].Outputs[?OutputKey==`PublicIP`].OutputValue' \
   --output text --region us-west-2)
 
-HOSTED_ZONE_ID=$(aws route53 list-hosted-zones-by-name \
-  --dns-name superlinear.com \
-  --query 'HostedZones[0].Id' \
-  --output text --region us-west-2 | sed 's|/hostedzone/||')
-
-aws cloudformation deploy \
-  --template-file 04-route53.yaml \
-  --stack-name claudeui-dns \
-  --region us-west-2 \
-  --parameter-overrides \
-    HostedZoneId="$HOSTED_ZONE_ID" \
-    ElasticIP="$ELASTIC_IP"
-```
-
-## Post-Deploy Manual Steps
-
-These steps require SSH access to the EC2 instance.
-
-### 1. Deploy mTLS Certificates
-
-Generate certificates per the PRD Section 6.1, then copy to the instance:
-
-```bash
 scp -i claudeui-ec2-key.pem ca.crt server.crt server.key ec2-user@$ELASTIC_IP:/tmp/
 ssh -i claudeui-ec2-key.pem ec2-user@$ELASTIC_IP '
   sudo cp /tmp/ca.crt /tmp/server.crt /tmp/server.key /etc/chisel/certs/
@@ -125,27 +132,7 @@ ssh -i claudeui-ec2-key.pem ec2-user@$ELASTIC_IP '
 '
 ```
 
-### 2. Set Up Let's Encrypt (certbot)
-
-```bash
-ssh -i claudeui-ec2-key.pem ec2-user@$ELASTIC_IP '
-  sudo certbot --nginx -d agents.superlinear.com
-'
-```
-
-### 3. Deploy Nginx Configuration
-
-```bash
-scp -i claudeui-ec2-key.pem deploy/ec2/nginx/claudeui.conf ec2-user@$ELASTIC_IP:/tmp/
-scp -i claudeui-ec2-key.pem deploy/ec2/nginx/claudeui-backends.conf ec2-user@$ELASTIC_IP:/tmp/
-ssh -i claudeui-ec2-key.pem ec2-user@$ELASTIC_IP '
-  sudo cp /tmp/claudeui.conf /etc/nginx/conf.d/
-  sudo cp /tmp/claudeui-backends.conf /etc/nginx/conf.d/
-  sudo nginx -t && sudo systemctl reload nginx
-'
-```
-
-### 4. Deploy Backend Registry and Scripts
+### 2. Deploy Backend Registry and Scripts
 
 ```bash
 ssh -i claudeui-ec2-key.pem ec2-user@$ELASTIC_IP '
@@ -155,14 +142,29 @@ ssh -i claudeui-ec2-key.pem ec2-user@$ELASTIC_IP '
 # Deploy aggregator and health check scripts and systemd units
 ```
 
+## Verification
+
+After deployment, verify the setup:
+
+```bash
+# DNS: agents.superlinear.com → ALB (CNAME/alias)
+dig agents.superlinear.com
+
+# DNS: tunnel.agents.superlinear.com → EIP
+dig tunnel.agents.superlinear.com
+
+# HTTPS via ALB (ACM cert)
+curl -I https://agents.superlinear.com
+
+# HTTP redirects to HTTPS (ALB listener rule)
+curl -I http://agents.superlinear.com
+```
+
 ## Stack Deletion (Reverse Order)
 
 Delete stacks in reverse order to avoid dependency errors:
 
 ```bash
-aws cloudformation delete-stack --stack-name claudeui-dns --region us-west-2
-aws cloudformation wait stack-delete-complete --stack-name claudeui-dns --region us-west-2
-
 aws cloudformation delete-stack --stack-name claudeui-ec2 --region us-west-2
 aws cloudformation wait stack-delete-complete --stack-name claudeui-ec2 --region us-west-2
 
