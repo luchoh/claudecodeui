@@ -38,6 +38,10 @@ Parameters:
   ChiselVersion:
     Type: String
     Default: "1.10.1"
+  ForceInstanceRebuild:
+    Type: String
+    Default: "1"
+    Description: Increment to force instance replacement (triggers UserData re-run)
   RepoUrl:
     Type: String
     Default: "git@github.com:luchoh/claudecodeui.git"
@@ -228,7 +232,7 @@ Resources:
       BlockDeviceMappings:
         - DeviceName: /dev/xvda
           Ebs:
-            VolumeSize: 20
+            VolumeSize: 25
             VolumeType: gp3
       MetadataOptions:
         HttpTokens: required          # IMDSv2 only
@@ -237,6 +241,8 @@ Resources:
       Tags:
         - Key: Name
           Value: agents-superlinear-ec2
+        - Key: ForceRebuild
+          Value: !Ref ForceInstanceRebuild
       UserData:
         Fn::Base64: !Sub |
           #!/bin/bash
@@ -246,7 +252,7 @@ Resources:
           # NOTE: Amazon Linux 2023 ships with awscli v2 and curl preinstalled
           # Ref: https://docs.aws.amazon.com/linux/al2023/ug/compare-with-al2.html
           dnf update -y
-          dnf install -y nginx git nodejs20 npm jq nmap-ncat
+          dnf install -y nginx git nodejs22 nodejs22-npm jq nmap-ncat gcc-c++ make
 
           # Create service users
           useradd --system --no-create-home --shell /usr/sbin/nologin chisel
@@ -319,42 +325,6 @@ Resources:
             echo "  claudeui/mtls-ca-cert, claudeui/mtls-server-cert, claudeui/mtls-server-key"
           fi
 
-          # --- Frontend build from git ---
-          DEPLOY_KEY=$(aws secretsmanager get-secret-value --region ${AWS::Region} \
-            --secret-id claudeui/github-deploy-key --query SecretString --output text 2>/dev/null || echo "")
-
-          if echo "$DEPLOY_KEY" | grep -q "BEGIN"; then
-            mkdir -p /root/.ssh
-            echo "$DEPLOY_KEY" > /root/.ssh/deploy_key
-            chmod 600 /root/.ssh/deploy_key
-            cat > /root/.ssh/config << 'SSH_CONFIG'
-          Host github.com
-            IdentityFile /root/.ssh/deploy_key
-            StrictHostKeyChecking accept-new
-          SSH_CONFIG
-            chmod 600 /root/.ssh/config
-
-            WORK_DIR=$(mktemp -d)
-            git clone -b ${RepoBranch} --depth 1 ${RepoUrl} "$WORK_DIR"
-            cd "$WORK_DIR"
-            npm ci
-            npm run build
-            rm -rf /var/www/claudeui/dist
-            cp -r "$WORK_DIR/dist" /var/www/claudeui/dist
-            rm -rf "$WORK_DIR" /root/.ssh/deploy_key /root/.ssh/config
-            echo "INFO: Frontend built from ${RepoUrl} (${RepoBranch}) and deployed"
-          else
-            echo "WARN: GitHub deploy key not provisioned. Creating placeholder page."
-            echo "  Provision secret claudeui/github-deploy-key and rebuild instance."
-            mkdir -p /var/www/claudeui/dist
-            cat > /var/www/claudeui/dist/index.html << 'PLACEHOLDER'
-          <!DOCTYPE html><html><body>
-          <h1>Claude Code UI</h1>
-          <p>Frontend not yet deployed. Provision the GitHub deploy key in Secrets Manager and rebuild the instance.</p>
-          </body></html>
-          PLACEHOLDER
-          fi
-
           # --- Backend registry ---
           mkdir -p /etc/claudeui
           cat > /etc/claudeui/backends.json << 'REGISTRY'
@@ -400,6 +370,14 @@ Resources:
           systemctl enable --now check-tunnels.timer
 
           # --- Nginx configuration (HTTP-only, TLS terminated at ALB) ---
+          # Placeholder page until frontend is built
+          mkdir -p /var/www/claudeui/dist
+          cat > /var/www/claudeui/dist/index.html << 'PLACEHOLDER'
+          <!DOCTYPE html><html><body>
+          <h1>Claude Code UI</h1><p>Loading...</p>
+          </body></html>
+          PLACEHOLDER
+
           cat > /etc/nginx/conf.d/claudeui.conf << 'NGINX_CONF'
           server {
               listen 80 default_server;
@@ -448,7 +426,6 @@ Resources:
           }
           NGINX_CONF
 
-          # Default backend map (add more backends by editing this file on the instance)
           cat > /etc/nginx/conf.d/claudeui-backends.conf << 'NGINX_MAP'
           map $cookie_backend $backend_port {
               default     9001;
@@ -456,12 +433,45 @@ Resources:
           }
           NGINX_MAP
 
-          # Remove Amazon Linux default page
           rm -f /etc/nginx/conf.d/default.conf 2>/dev/null || true
           rm -f /usr/share/nginx/html/index.html 2>/dev/null || true
-
-          # Start nginx (config is fully deployed above)
           systemctl enable --now nginx
+
+          # --- Frontend build from git (runs after nginx, non-fatal) ---
+          DEPLOY_KEY=$(aws secretsmanager get-secret-value --region ${AWS::Region} \
+            --secret-id claudeui/github-deploy-key --query SecretString --output text 2>/dev/null || echo "")
+
+          if echo "$DEPLOY_KEY" | grep -q "BEGIN"; then
+            (
+              set +e  # Don't abort script if build fails
+              mkdir -p /root/.ssh
+              echo "$DEPLOY_KEY" > /root/.ssh/deploy_key
+              chmod 600 /root/.ssh/deploy_key
+              cat > /root/.ssh/config << 'SSH_CONFIG'
+          Host github.com
+            IdentityFile /root/.ssh/deploy_key
+            StrictHostKeyChecking accept-new
+          SSH_CONFIG
+              chmod 600 /root/.ssh/config
+
+              WORK_DIR=$(mktemp -d)
+              git clone -b ${RepoBranch} --depth 1 ${RepoUrl} "$WORK_DIR" && \
+              cd "$WORK_DIR" && \
+              npm ci && \
+              npm run build && \
+              rm -rf /var/www/claudeui/dist && \
+              cp -r "$WORK_DIR/dist" /var/www/claudeui/dist && \
+              echo "INFO: Frontend built from ${RepoUrl} (${RepoBranch}) and deployed"
+
+              BUILD_EXIT=$?
+              rm -rf "$WORK_DIR" /root/.ssh/deploy_key /root/.ssh/config
+              if [ $BUILD_EXIT -ne 0 ]; then
+                echo "ERROR: Frontend build failed (exit $BUILD_EXIT). Placeholder page remains."
+              fi
+            )
+          else
+            echo "WARN: GitHub deploy key not provisioned. Placeholder page served."
+          fi
 
   EIPAssociation:
     Type: AWS::EC2::EIPAssociation
