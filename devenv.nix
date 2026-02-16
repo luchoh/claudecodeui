@@ -7,16 +7,17 @@
   disabledModules = [ "${inputs.devenv}/integrations/secretspec.nix" ];
 
   packages = with pkgs; [
-    nodejs_20
+    nodejs_22
     jq
     git
     openssl  # For generating JWT_SECRET: openssl rand -base64 32
     mitmproxy
+    chisel   # jpillora/chisel — reverse tunnel to EC2 (mTLS + auth)
   ];
 
   languages.javascript = {
     enable = true;
-    package = pkgs.nodejs_20;
+    package = pkgs.nodejs_22;
   };
 
   scripts = {
@@ -248,6 +249,77 @@
       -w "$flow_file" > "$log_file" 2>&1
   '';
 
+  processes.tunnel.exec = ''
+    set -euo pipefail
+    cd "$DEVENV_ROOT"
+
+    # Require .env.dev for CHISEL_AUTH
+    if [ ! -f .env.dev ]; then
+      echo "ERROR: .env.dev not found. Run: cp .env.dev.example .env.dev"
+      exit 1
+    fi
+
+    set -a
+    source .env.dev
+    set +a
+
+    if [ -z "''${CHISEL_AUTH:-}" ]; then
+      echo "════════════════════════════════════════════════════════════════"
+      echo "ERROR: CHISEL_AUTH not set in .env.dev"
+      echo "════════════════════════════════════════════════════════════════"
+      echo ""
+      echo "Retrieve it with:"
+      echo "  aws secretsmanager get-secret-value --secret-id claudeui/chisel-auth \\"
+      echo "    --query SecretString --output text --region us-west-2 --profile sl-admin"
+      echo ""
+      echo "Then add to .env.dev:  CHISEL_AUTH=<value>"
+      echo ""
+      exit 1
+    fi
+
+    cert_dir="$DEVENV_ROOT/.chisel"
+    for f in ca.crt client.crt client.key; do
+      if [ ! -f "$cert_dir/$f" ]; then
+        echo "════════════════════════════════════════════════════════════════"
+        echo "ERROR: Missing $cert_dir/$f"
+        echo "════════════════════════════════════════════════════════════════"
+        echo ""
+        echo "mTLS client certs are per-developer. Generate yours:"
+        echo ""
+        echo "  1. Retrieve the CA cert + key:"
+        echo "     aws secretsmanager get-secret-value --secret-id claudeui/mtls-ca-cert \\"
+        echo "       --query SecretString --output text --region us-west-2 --profile sl-admin > .chisel/ca.crt"
+        echo "     aws secretsmanager get-secret-value --secret-id claudeui-ca/mtls-ca-key \\"
+        echo "       --query SecretString --output text --region us-west-2 --profile sl-admin > /tmp/ca.key"
+        echo ""
+        echo "  2. Generate client cert:"
+        echo "     openssl req -new -newkey rsa:2048 -nodes -keyout .chisel/client.key \\"
+        echo "       -out /tmp/client.csr -subj '/CN=$(whoami)-client'"
+        echo "     openssl x509 -req -in /tmp/client.csr -CA .chisel/ca.crt -CAkey /tmp/ca.key \\"
+        echo "       -CAcreateserial -out .chisel/client.crt -days 365 -sha256"
+        echo "     rm -f /tmp/client.csr /tmp/ca.key /tmp/ca.srl"
+        echo ""
+        exit 1
+      fi
+    done
+
+    tunnel_host="''${TUNNEL_HOST:-tunnel.agents.superlinear.com}"
+    tunnel_port="''${TUNNEL_PORT:-8443}"
+    remote_port="''${TUNNEL_REMOTE_PORT:-9001}"
+    local_port="''${PORT:-3001}"
+
+    echo "Connecting tunnel: localhost:$local_port -> $tunnel_host port $remote_port"
+    echo "Endpoint: https://$tunnel_host:$tunnel_port"
+
+    exec chisel client \
+      --auth "$CHISEL_AUTH" \
+      --tls-ca "$cert_dir/ca.crt" \
+      --tls-cert "$cert_dir/client.crt" \
+      --tls-key "$cert_dir/client.key" \
+      "https://$tunnel_host:$tunnel_port" \
+      "R:$remote_port:localhost:$local_port"
+  '';
+
   enterShell = ''
     echo ""
     echo "════════════════════════════════════════════════════════════════"
@@ -306,10 +378,21 @@
       fi
     fi
 
+    # Check tunnel readiness
+    if [ -z "''${CHISEL_AUTH:-}" ]; then
+      echo "⚠️  CHISEL_AUTH not set (tunnel won't connect)"
+    elif [ ! -f .chisel/client.crt ]; then
+      echo "⚠️  .chisel/client.crt missing (run 'devenv up tunnel' for setup instructions)"
+    else
+      echo "✅ Tunnel configured (port ''${PORT:-3001} → ''${TUNNEL_HOST:-tunnel.agents.superlinear.com}:''${TUNNEL_REMOTE_PORT:-9001})"
+    fi
+    echo ""
+
     echo "Commands:"
-    echo "  devenv up                # run server + client together"
+    echo "  devenv up                # run server + client + tunnel together"
     echo "  devenv up server         # run Express backend only (port ''${PORT:-3001})"
     echo "  devenv up client         # run Vite dev server only (port ''${VITE_PORT:-5173})"
+    echo "  devenv up tunnel         # run chisel reverse tunnel to EC2"
     echo "  devenv up mitmproxy      # run mitmdump on 127.0.0.1:''${MITM_PROXY_PORT:-8082}"
     echo "  npm run build            # build for production"
     echo "  npm run typecheck        # run TypeScript type checking"
