@@ -232,7 +232,7 @@ Resources:
       BlockDeviceMappings:
         - DeviceName: /dev/xvda
           Ebs:
-            VolumeSize: 25
+            VolumeSize: 30
             VolumeType: gp3
       MetadataOptions:
         HttpTokens: required          # IMDSv2 only
