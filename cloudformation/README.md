@@ -5,9 +5,9 @@ Infrastructure as Code for the Claude Code UI EC2 + Chisel tunnel deployment.
 ## Prerequisites
 
 - AWS CLI v2 configured with appropriate credentials (`aws configure`)
-- An existing EC2 Key Pair in us-west-2 (create via AWS Console or `aws ec2 create-key-pair`)
 - A Route53 hosted zone for your domain (e.g., `superlinear.com`)
-- Amazon Linux 2023 ARM64 AMI ID for us-west-2 (find via AWS Console or `aws ec2 describe-images`)
+
+The EC2 key pair and AMI are managed declaratively by the stack — no manual lookup required.
 
 ## Deploy Order
 
@@ -63,14 +63,29 @@ aws cloudformation deploy \
   --parameter-overrides \
     VpcId="$VPC_ID" \
     SubnetId="$SUBNET_ID" \
-    ImageId="ami-XXXXXXXXXXXXXXXXX" \
-    KeyName="your-key-pair-name" \
     AdminCidr="YOUR_IP/32"
+```
+
+After deployment, retrieve the SSH private key from SSM Parameter Store:
+
+```bash
+KEY_PAIR_ID=$(aws cloudformation describe-stacks \
+  --stack-name claudeui-ec2 \
+  --query 'Stacks[0].Outputs[?OutputKey==`KeyPairId`].OutputValue' \
+  --output text --region us-west-2)
+
+aws ssm get-parameter \
+  --name "/ec2/keypair/$KEY_PAIR_ID" \
+  --with-decryption \
+  --query Parameter.Value \
+  --output text --region us-west-2 > claudeui-ec2-key.pem
+
+chmod 600 claudeui-ec2-key.pem
 ```
 
 ### 4. Route53 DNS
 
-Get the Elastic IP from the EC2 stack outputs:
+Get the Elastic IP and Hosted Zone ID:
 
 ```bash
 ELASTIC_IP=$(aws cloudformation describe-stacks \
@@ -78,12 +93,17 @@ ELASTIC_IP=$(aws cloudformation describe-stacks \
   --query 'Stacks[0].Outputs[?OutputKey==`PublicIP`].OutputValue' \
   --output text --region us-west-2)
 
+HOSTED_ZONE_ID=$(aws route53 list-hosted-zones-by-name \
+  --dns-name superlinear.com \
+  --query 'HostedZones[0].Id' \
+  --output text --region us-west-2 | sed 's|/hostedzone/||')
+
 aws cloudformation deploy \
   --template-file 04-route53.yaml \
   --stack-name claudeui-dns \
   --region us-west-2 \
   --parameter-overrides \
-    HostedZoneId="ZXXXXXXXXXXXXX" \
+    HostedZoneId="$HOSTED_ZONE_ID" \
     ElasticIP="$ELASTIC_IP"
 ```
 
@@ -96,8 +116,8 @@ These steps require SSH access to the EC2 instance.
 Generate certificates per the PRD Section 6.1, then copy to the instance:
 
 ```bash
-scp ca.crt server.crt server.key ec2-user@<ELASTIC_IP>:/tmp/
-ssh ec2-user@<ELASTIC_IP> '
+scp -i claudeui-ec2-key.pem ca.crt server.crt server.key ec2-user@$ELASTIC_IP:/tmp/
+ssh -i claudeui-ec2-key.pem ec2-user@$ELASTIC_IP '
   sudo cp /tmp/ca.crt /tmp/server.crt /tmp/server.key /etc/chisel/certs/
   sudo chown chisel:chisel /etc/chisel/certs/*
   sudo chmod 600 /etc/chisel/certs/server.key
@@ -108,7 +128,7 @@ ssh ec2-user@<ELASTIC_IP> '
 ### 2. Set Up Let's Encrypt (certbot)
 
 ```bash
-ssh ec2-user@<ELASTIC_IP> '
+ssh -i claudeui-ec2-key.pem ec2-user@$ELASTIC_IP '
   sudo certbot --nginx -d agents.superlinear.com
 '
 ```
@@ -116,9 +136,9 @@ ssh ec2-user@<ELASTIC_IP> '
 ### 3. Deploy Nginx Configuration
 
 ```bash
-scp deploy/ec2/nginx/claudeui.conf ec2-user@<ELASTIC_IP>:/tmp/
-scp deploy/ec2/nginx/claudeui-backends.conf ec2-user@<ELASTIC_IP>:/tmp/
-ssh ec2-user@<ELASTIC_IP> '
+scp -i claudeui-ec2-key.pem deploy/ec2/nginx/claudeui.conf ec2-user@$ELASTIC_IP:/tmp/
+scp -i claudeui-ec2-key.pem deploy/ec2/nginx/claudeui-backends.conf ec2-user@$ELASTIC_IP:/tmp/
+ssh -i claudeui-ec2-key.pem ec2-user@$ELASTIC_IP '
   sudo cp /tmp/claudeui.conf /etc/nginx/conf.d/
   sudo cp /tmp/claudeui-backends.conf /etc/nginx/conf.d/
   sudo nginx -t && sudo systemctl reload nginx
@@ -128,7 +148,7 @@ ssh ec2-user@<ELASTIC_IP> '
 ### 4. Deploy Backend Registry and Scripts
 
 ```bash
-ssh ec2-user@<ELASTIC_IP> '
+ssh -i claudeui-ec2-key.pem ec2-user@$ELASTIC_IP '
   sudo mkdir -p /etc/claudeui
 '
 # Edit and deploy backends.json with your backend configuration

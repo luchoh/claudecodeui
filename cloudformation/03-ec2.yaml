@@ -10,10 +10,13 @@ Parameters:
     Type: String
     Default: t4g.small
   ImageId:
-    Type: AWS::EC2::Image::Id
-    Description: Amazon Linux 2023 ARM64 AMI
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64
+    Description: SSM parameter path for the AMI (resolves to latest AL2023 ARM64 at deploy time)
   KeyName:
-    Type: AWS::EC2::KeyPair::KeyName
+    Type: String
+    Default: claudeui-ec2-key
+    Description: Name for the EC2 key pair (created by this stack; private key stored in SSM Parameter Store)
   DomainName:
     Type: String
     Default: agents.superlinear.com
@@ -27,6 +30,15 @@ Parameters:
     Default: "1.10.1"
 
 Resources:
+  KeyPair:
+    Type: AWS::EC2::KeyPair
+    Properties:
+      KeyName: !Ref KeyName
+      KeyType: ed25519
+      Tags:
+        - Key: Name
+          Value: !Ref KeyName
+
   SecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -92,7 +104,7 @@ Resources:
       SubnetId: !Ref SubnetId
       SecurityGroupIds:
         - !Ref SecurityGroup
-      KeyName: !Ref KeyName
+      KeyName: !Ref KeyPair
       IamInstanceProfile: !Ref InstanceProfile
       BlockDeviceMappings:
         - DeviceName: /dev/xvda
@@ -182,3 +194,8 @@ Outputs:
     Value: !Ref ElasticIP
   InstanceId:
     Value: !Ref Instance
+  KeyPairId:
+    Value: !GetAtt KeyPair.KeyPairId
+    Description: >-
+      EC2 key pair ID. Retrieve the private key with:
+      aws ssm get-parameter --name /ec2/keypair/<KeyPairId> --with-decryption --query Parameter.Value --output text

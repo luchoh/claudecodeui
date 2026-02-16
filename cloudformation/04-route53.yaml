@@ -4,7 +4,9 @@ Description: Claude Code UI — Route53 DNS records
 Parameters:
   HostedZoneId:
     Type: AWS::Route53::HostedZone::Id
-    Description: Route53 Hosted Zone ID for the domain
+    Description: >-
+      Route53 Hosted Zone ID (bare ID without /hostedzone/ prefix). Find with:
+      aws route53 list-hosted-zones-by-name --dns-name superlinear.com --query 'HostedZones[0].Id' --output text | sed 's|/hostedzone/||'
   ElasticIP:
     Type: String
     Description: Elastic IP address from the EC2 stack
