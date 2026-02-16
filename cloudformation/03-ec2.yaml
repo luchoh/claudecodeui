@@ -232,7 +232,7 @@ Resources:
       BlockDeviceMappings:
         - DeviceName: /dev/xvda
           Ebs:
-            VolumeSize: 20
+            VolumeSize: 25
             VolumeType: gp3
       MetadataOptions:
         HttpTokens: required          # IMDSv2 only
@@ -442,6 +442,13 @@ Resources:
           rm -f /etc/nginx/conf.d/default.conf 2>/dev/null || true
           rm -f /usr/share/nginx/html/index.html 2>/dev/null || true
           systemctl enable --now nginx
+
+          # --- Swap file (t4g.small has 2 GB RAM; vite build needs more) ---
+          fallocate -l 2G /swapfile
+          chmod 600 /swapfile
+          mkswap /swapfile
+          swapon /swapfile
+          echo '/swapfile none swap sw 0 0' >> /etc/fstab
 
           # --- Frontend build from git (runs after nginx, non-fatal) ---
           set +x  # Suppress trace for deploy key
