@@ -40,12 +40,62 @@ aws cloudformation deploy \
   --region us-west-2
 ```
 
-After deployment, update the chisel-auth secret with your chosen credential:
+After deployment, provision secrets. The EC2 instance (stack 3) pulls these at boot time.
+
+**Chisel auth credential:**
 
 ```bash
 aws secretsmanager put-secret-value \
   --secret-id claudeui/chisel-auth \
   --secret-string 'user:YOUR_STRONG_PASSWORD' \
+  --region us-west-2
+```
+
+**mTLS certificates** (generate per PRD Section 6.1, then store PEM content):
+
+```bash
+aws secretsmanager put-secret-value \
+  --secret-id claudeui/mtls-ca-cert \
+  --secret-string file://ca.crt \
+  --region us-west-2
+
+aws secretsmanager put-secret-value \
+  --secret-id claudeui/mtls-server-cert \
+  --secret-string file://server.crt \
+  --region us-west-2
+
+aws secretsmanager put-secret-value \
+  --secret-id claudeui/mtls-server-key \
+  --secret-string file://server.key \
+  --region us-west-2
+```
+
+**GitHub deploy key** (for cloning and building the frontend on the instance):
+
+```bash
+# 1. Generate a deploy key
+ssh-keygen -t ed25519 -f claudeui-deploy-key -N "" -C "claudeui-ec2-deploy"
+
+# 2. Add the PUBLIC key to GitHub repo → Settings → Deploy keys (read-only)
+cat claudeui-deploy-key.pub
+
+# 3. Store the PRIVATE key in Secrets Manager
+aws secretsmanager put-secret-value \
+  --secret-id claudeui/github-deploy-key \
+  --secret-string file://claudeui-deploy-key \
+  --region us-west-2
+
+# 4. Delete local copy
+rm -f claudeui-deploy-key claudeui-deploy-key.pub
+```
+
+**Note:** The CA private key (`claudeui-ca/mtls-ca-key`) is stored under a separate prefix
+and is NOT accessible to the EC2 instance. Store it manually if needed for future cert generation:
+
+```bash
+aws secretsmanager put-secret-value \
+  --secret-id claudeui-ca/mtls-ca-key \
+  --secret-string file://ca.key \
   --region us-west-2
 ```
 
@@ -108,39 +158,20 @@ aws ssm get-parameter \
 chmod 600 claudeui-ec2-key.pem
 ```
 
-## Post-Deploy Manual Steps
+## What UserData Does
 
-Nginx config and the default backend map are deployed declaratively via UserData.
-Only the mTLS certificates require manual deployment.
+Everything is deployed declaratively at instance boot via UserData. No SSH or SCP needed.
 
-### 1. Deploy mTLS Certificates
+| Component | Source | Behavior if secret missing |
+|-----------|--------|---------------------------|
+| Chisel auth | `claudeui/chisel-auth` | **Fatal** — UserData fails |
+| mTLS certs | `claudeui/mtls-ca-cert`, `mtls-server-cert`, `mtls-server-key` | Chisel enabled but not started; logs warning |
+| Frontend | `claudeui/github-deploy-key` + git clone + build | Placeholder page served; logs warning |
+| Nginx config | Embedded in UserData | Always deployed |
+| Backend registry | Embedded in UserData | Default: single backend on port 9001 |
+| Tunnel health check | Embedded in UserData | Timer runs every 30s |
 
-Generate certificates per the PRD Section 6.1, then copy to the instance:
-
-```bash
-ELASTIC_IP=$(aws cloudformation describe-stacks \
-  --stack-name claudeui-ec2 \
-  --query 'Stacks[0].Outputs[?OutputKey==`PublicIP`].OutputValue' \
-  --output text --region us-west-2)
-
-scp -i claudeui-ec2-key.pem ca.crt server.crt server.key ec2-user@$ELASTIC_IP:/tmp/
-ssh -i claudeui-ec2-key.pem ec2-user@$ELASTIC_IP '
-  sudo cp /tmp/ca.crt /tmp/server.crt /tmp/server.key /etc/chisel/certs/
-  sudo chown chisel:chisel /etc/chisel/certs/*
-  sudo chmod 600 /etc/chisel/certs/server.key
-  sudo systemctl start chisel-server
-'
-```
-
-### 2. Deploy Backend Registry and Scripts
-
-```bash
-ssh -i claudeui-ec2-key.pem ec2-user@$ELASTIC_IP '
-  sudo mkdir -p /etc/claudeui
-'
-# Edit and deploy backends.json with your backend configuration
-# Deploy aggregator and health check scripts and systemd units
-```
+To get a fully functional instance, provision all secrets (Section 2 above) **before** deploying stack 3.
 
 ## Verification
 

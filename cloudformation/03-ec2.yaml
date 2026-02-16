@@ -38,6 +38,14 @@ Parameters:
   ChiselVersion:
     Type: String
     Default: "1.10.1"
+  RepoUrl:
+    Type: String
+    Default: "git@github.com:luchoh/claudecodeui.git"
+    Description: Git SSH URL for cloning the app repo
+  RepoBranch:
+    Type: String
+    Default: main
+    Description: Git branch to build and deploy
 
 Resources:
   KeyPair:
@@ -252,7 +260,7 @@ Resources:
           mkdir -p /etc/chisel/certs /var/log/chisel /var/lib/claudeui /var/www/claudeui
           chown chisel:chisel /var/log/chisel
 
-          # Fetch secrets from Secrets Manager
+          # --- Secrets from Secrets Manager ---
           CHISEL_AUTH=$(aws secretsmanager get-secret-value \
             --region ${AWS::Region} \
             --secret-id claudeui/chisel-auth \
@@ -260,7 +268,7 @@ Resources:
           echo "AUTH=$CHISEL_AUTH" > /etc/chisel/env
           chmod 600 /etc/chisel/env
 
-          # Chisel systemd service
+          # --- Chisel systemd service ---
           cat > /etc/systemd/system/chisel-server.service << 'UNIT'
           [Unit]
           Description=Chisel Tunnel Server
@@ -285,9 +293,113 @@ Resources:
           UNIT
 
           systemctl daemon-reload
-          systemctl enable chisel-server
 
-          # Nginx configuration — HTTP-only (TLS terminated at ALB)
+          # --- mTLS certificates from Secrets Manager ---
+          CA_CERT=$(aws secretsmanager get-secret-value --region ${AWS::Region} \
+            --secret-id claudeui/mtls-ca-cert --query SecretString --output text 2>/dev/null || echo "")
+          SERVER_CERT=$(aws secretsmanager get-secret-value --region ${AWS::Region} \
+            --secret-id claudeui/mtls-server-cert --query SecretString --output text 2>/dev/null || echo "")
+          SERVER_KEY=$(aws secretsmanager get-secret-value --region ${AWS::Region} \
+            --secret-id claudeui/mtls-server-key --query SecretString --output text 2>/dev/null || echo "")
+
+          if echo "$CA_CERT" | grep -q "BEGIN CERTIFICATE" && \
+             echo "$SERVER_CERT" | grep -q "BEGIN CERTIFICATE" && \
+             echo "$SERVER_KEY" | grep -q "BEGIN"; then
+            echo "$CA_CERT" > /etc/chisel/certs/ca.crt
+            echo "$SERVER_CERT" > /etc/chisel/certs/server.crt
+            echo "$SERVER_KEY" > /etc/chisel/certs/server.key
+            chown chisel:chisel /etc/chisel/certs/*
+            chmod 644 /etc/chisel/certs/ca.crt /etc/chisel/certs/server.crt
+            chmod 600 /etc/chisel/certs/server.key
+            systemctl enable --now chisel-server
+            echo "INFO: chisel-server started with mTLS certs from Secrets Manager"
+          else
+            systemctl enable chisel-server
+            echo "WARN: mTLS certs not provisioned yet. Provision secrets and rebuild instance:"
+            echo "  claudeui/mtls-ca-cert, claudeui/mtls-server-cert, claudeui/mtls-server-key"
+          fi
+
+          # --- Frontend build from git ---
+          DEPLOY_KEY=$(aws secretsmanager get-secret-value --region ${AWS::Region} \
+            --secret-id claudeui/github-deploy-key --query SecretString --output text 2>/dev/null || echo "")
+
+          if echo "$DEPLOY_KEY" | grep -q "BEGIN"; then
+            mkdir -p /root/.ssh
+            echo "$DEPLOY_KEY" > /root/.ssh/deploy_key
+            chmod 600 /root/.ssh/deploy_key
+            cat > /root/.ssh/config << 'SSH_CONFIG'
+          Host github.com
+            IdentityFile /root/.ssh/deploy_key
+            StrictHostKeyChecking accept-new
+          SSH_CONFIG
+            chmod 600 /root/.ssh/config
+
+            WORK_DIR=$(mktemp -d)
+            git clone -b ${RepoBranch} --depth 1 ${RepoUrl} "$WORK_DIR"
+            cd "$WORK_DIR"
+            npm ci
+            npm run build
+            rm -rf /var/www/claudeui/dist
+            cp -r "$WORK_DIR/dist" /var/www/claudeui/dist
+            rm -rf "$WORK_DIR" /root/.ssh/deploy_key /root/.ssh/config
+            echo "INFO: Frontend built from ${RepoUrl} (${RepoBranch}) and deployed"
+          else
+            echo "WARN: GitHub deploy key not provisioned. Creating placeholder page."
+            echo "  Provision secret claudeui/github-deploy-key and rebuild instance."
+            mkdir -p /var/www/claudeui/dist
+            cat > /var/www/claudeui/dist/index.html << 'PLACEHOLDER'
+          <!DOCTYPE html><html><body>
+          <h1>Claude Code UI</h1>
+          <p>Frontend not yet deployed. Provision the GitHub deploy key in Secrets Manager and rebuild the instance.</p>
+          </body></html>
+          PLACEHOLDER
+          fi
+
+          # --- Backend registry ---
+          mkdir -p /etc/claudeui
+          cat > /etc/claudeui/backends.json << 'REGISTRY'
+          {
+            "backends": [
+              {"id": "backend-01", "port": 9001}
+            ]
+          }
+          REGISTRY
+
+          # --- Tunnel health check script + timer ---
+          cat > /usr/local/bin/check-tunnels.sh << 'HEALTH_SCRIPT'
+          #!/bin/bash
+          BACKENDS_JSON="/etc/claudeui/backends.json"
+          PORTS=$(jq -r '.backends[].port' "$BACKENDS_JSON")
+          for port in $PORTS; do
+            if ! nc -z -w 2 localhost $port 2>/dev/null; then
+              echo "$(date) WARN: tunnel port $port unreachable" >> /var/log/chisel/health.log
+            fi
+          done
+          HEALTH_SCRIPT
+          chmod +x /usr/local/bin/check-tunnels.sh
+
+          cat > /etc/systemd/system/check-tunnels.service << 'TIMER_SVC'
+          [Unit]
+          Description=Check chisel tunnel health
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/bin/check-tunnels.sh
+          TIMER_SVC
+
+          cat > /etc/systemd/system/check-tunnels.timer << 'TIMER_UNIT'
+          [Unit]
+          Description=Run tunnel health check every 30s
+          [Timer]
+          OnBootSec=60
+          OnUnitActiveSec=30
+          [Install]
+          WantedBy=timers.target
+          TIMER_UNIT
+
+          systemctl daemon-reload
+          systemctl enable --now check-tunnels.timer
+
+          # --- Nginx configuration (HTTP-only, TLS terminated at ALB) ---
           cat > /etc/nginx/conf.d/claudeui.conf << 'NGINX_CONF'
           server {
               listen 80 default_server;
@@ -350,8 +462,6 @@ Resources:
 
           # Start nginx (config is fully deployed above)
           systemctl enable --now nginx
-
-          # NOTE: chisel-server won't start until mTLS certs are deployed (manual step)
 
   EIPAssociation:
     Type: AWS::EC2::EIPAssociation
