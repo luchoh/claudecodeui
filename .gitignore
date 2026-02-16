@@ -141,4 +141,10 @@ dev-debug.log
 
 # Task files
 tasks.json
-tasks/ 
+tasks/
+
+# Chisel tunnel (client certs, binary, connection scripts)
+.chisel/
+
+# EC2 SSH key
+*.pem
