@@ -102,7 +102,8 @@ const app = express();
 // Trust reverse proxy (nginx) for correct req.ip in rate limiting, CSRF, etc.
 // Environment-gated so local dev is unaffected.
 if (process.env.TRUST_PROXY) {
-  app.set('trust proxy', parseInt(process.env.TRUST_PROXY, 10) || 1);
+  const tp = parseInt(process.env.TRUST_PROXY, 10);
+  app.set('trust proxy', Number.isNaN(tp) ? 1 : tp);
 }
 
 const server = http.createServer(app);

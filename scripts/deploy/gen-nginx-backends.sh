@@ -40,6 +40,14 @@ if [[ "$BACKEND_COUNT" -eq 0 ]]; then
     exit 1
 fi
 
+# Validate port numbers (must be 1024-65535)
+INVALID_PORTS=$(jq -r '.backends | to_entries[] | select(.value.port < 1024 or .value.port > 65535) | "\(.key): \(.value.port)"' "$BACKENDS_JSON")
+if [[ -n "$INVALID_PORTS" ]]; then
+    echo "ERROR: invalid port numbers in $BACKENDS_JSON:" >&2
+    echo "$INVALID_PORTS" >&2
+    exit 1
+fi
+
 # Get the first backend's port for the default
 DEFAULT_PORT=$(jq -r '.backends | to_entries | sort_by(.key) | .[0].value.port' "$BACKENDS_JSON")
 

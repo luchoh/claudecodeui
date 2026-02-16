@@ -154,8 +154,11 @@ Resources:
           ExecStart=/usr/local/bin/chisel server --port 8443 --reverse --tls-key /etc/chisel/certs/server.key --tls-cert /etc/chisel/certs/server.crt --tls-ca /etc/chisel/certs/ca.crt
           Restart=always
           RestartSec=5
+          LimitNOFILE=65535
           NoNewPrivileges=true
           ProtectSystem=strict
+          ProtectHome=yes
+          PrivateTmp=true
           ReadWritePaths=/var/log/chisel
           [Install]
           WantedBy=multi-user.target
